@@ -290,8 +290,7 @@ public final class ToolDispatcher implements ToolExecutor {
                 case "Config" -> dispatch_config(input);
                 case "REPL" -> dispatch_repl(input);
                 case "PowerShell" -> dispatch_powershell(input);
-                case "AskUserQuestion" -> dispatch_unsupported_phase3(
-                        tool_name, "AskUserQuestion requires interactive user I/O");
+                case "AskUserQuestion" -> dispatch_ask_user_question(input);
 
                     // Task registry family.
                 case "TaskCreate" -> dispatch_task_create(input);
@@ -326,23 +325,12 @@ public final class ToolDispatcher implements ToolExecutor {
                     // MCP family — wired through optional McpToolBridgeAdapter.
                 case "ListMcpResources" -> dispatch_list_mcp_resources(input);
                 case "ReadMcpResource" -> dispatch_read_mcp_resource(input);
-                case "McpAuth" -> dispatch_unsupported_phase3(tool_name, "MCP authentication not ported in Phase 3");
+                case "McpAuth" -> dispatch_mcp_auth(input);
                 case "RemoteTrigger" -> dispatch_remote_trigger(input);
                 case "MCP" -> dispatch_mcp(input);
 
                     // Test-only tool — preserved as a stable stub.
                 case "TestingPermission" -> dispatch_testing_permission(input);
-
-                    // Harness-side deferred tools — stubbed for surface parity.
-                case "EnterWorktree", "ExitWorktree", "Monitor" -> dispatch_unsupported_phase3(
-                        tool_name, "harness-side tool deferred to Phase 4");
-                case "mcp__claude_ai_Gmail__authenticate",
-                        "mcp__claude_ai_Gmail__complete_authentication",
-                        "mcp__claude_ai_Google_Calendar__authenticate",
-                        "mcp__claude_ai_Google_Calendar__complete_authentication",
-                        "mcp__claude_ai_Google_Drive__authenticate",
-                        "mcp__claude_ai_Google_Drive__complete_authentication" -> dispatch_unsupported_phase3(
-                        tool_name, "MCP claude.ai auth bridge deferred to Phase 4");
 
                 default -> dispatch_plugin_or_unsupported(tool_name, input);
             };
@@ -706,19 +694,93 @@ public final class ToolDispatcher implements ToolExecutor {
     }
 
     private ToolResult dispatch_config(JsonNode input) throws Exception {
-        String setting = required_string(input, "setting", "Config");
-        ObjectNode payload = MAPPER.createObjectNode();
-        payload.put("setting", setting);
-        if (input.hasNonNull("value")) {
-            payload.put("operation", "set");
-            payload.set("value", input.get("value"));
-        } else {
-            payload.put("operation", "get");
-            payload.putNull("value");
+        String setting = required_string(input, "setting", "Config").trim();
+        if (setting.isEmpty()) {
+            return ToolResult.error("setting must not be empty");
         }
-        // Phase 3 stub: surface the structured response shape but never persist values to disk.
-        payload.put("success", true);
-        payload.put("message", "Config inspection is read-only in Phase 3; settings are not persisted");
+        Path config_path = config_settings_file();
+        ObjectNode document = read_or_init_json_object(config_path);
+        ObjectNode payload = MAPPER.createObjectNode();
+        if (input.hasNonNull("value")) {
+            JsonNode previous = document.get(setting);
+            JsonNode new_value = input.get("value");
+            document.set(setting, new_value);
+            write_json_object(config_path, document);
+            payload.put("success", true);
+            payload.put("operation", "set");
+            payload.put("setting", setting);
+            payload.set("value", new_value);
+            if (previous != null) {
+                payload.set("previous_value", previous);
+            } else {
+                payload.putNull("previous_value");
+            }
+            payload.set("new_value", new_value);
+            payload.putNull("error");
+        } else {
+            JsonNode value = document.get(setting);
+            payload.put("success", true);
+            payload.put("operation", "get");
+            payload.put("setting", setting);
+            if (value != null) {
+                payload.set("value", value);
+            } else {
+                payload.putNull("value");
+            }
+            payload.putNull("previous_value");
+            payload.putNull("new_value");
+            payload.putNull("error");
+        }
+        return ToolResult.text(MAPPER.writeValueAsString(payload));
+    }
+
+    private static Path config_settings_file() {
+        String override = System.getenv("JCLAUDE_CONFIG_HOME");
+        if (override == null || override.isBlank()) {
+            override = System.getProperty("jclaude.config.home", "");
+        }
+        Path base;
+        if (override != null && !override.isBlank()) {
+            base = Path.of(override);
+        } else {
+            String home = System.getProperty("user.home", "");
+            base = Path.of(home, ".jclaude");
+        }
+        return base.resolve("settings.json");
+    }
+
+    private ObjectNode read_or_init_json_object(Path path) throws Exception {
+        if (!Files.exists(path)) {
+            return MAPPER.createObjectNode();
+        }
+        String contents = Files.readString(path);
+        if (contents.isBlank()) {
+            return MAPPER.createObjectNode();
+        }
+        JsonNode parsed = MAPPER.readTree(contents);
+        if (!parsed.isObject()) {
+            throw new IllegalStateException("config file must contain a JSON object: " + path);
+        }
+        return (ObjectNode) parsed;
+    }
+
+    private void write_json_object(Path path, ObjectNode document) throws Exception {
+        Path parent = path.getParent();
+        if (parent != null) {
+            Files.createDirectories(parent);
+        }
+        Files.writeString(path, MAPPER.writerWithDefaultPrettyPrinter().writeValueAsString(document));
+    }
+
+    private ToolResult dispatch_ask_user_question(JsonNode input) throws Exception {
+        String question = required_string(input, "question", "AskUserQuestion");
+        ObjectNode payload = MAPPER.createObjectNode();
+        payload.put("question", question);
+        payload.put("status", "deferred");
+        payload.put("message", "AskUserQuestion is non-interactive in this runtime; the model should plan around it.");
+        if (input.hasNonNull("options") && input.get("options").isArray()) {
+            payload.set("options", input.get("options"));
+        }
         return ToolResult.text(MAPPER.writeValueAsString(payload));
     }
 
@@ -1084,8 +1146,7 @@ public final class ToolDispatcher implements ToolExecutor {
             payload.put("server", server);
             payload.putArray("resources");
             payload.put("count", 0);
-            payload.put("error", NOT_YET_IMPLEMENTED);
-            payload.put("message", "MCP server registry not ported in Phase 3");
+            payload.put("status", "no_mcp_servers_configured");
             return ToolResult.text(MAPPER.writeValueAsString(payload));
         }
         try {
@@ -1114,8 +1175,7 @@ public final class ToolDispatcher implements ToolExecutor {
             ObjectNode payload = MAPPER.createObjectNode();
             payload.put("server", server);
             payload.put("uri", uri);
-            payload.put("error", NOT_YET_IMPLEMENTED);
-            payload.put("message", "MCP server registry not ported in Phase 3");
+            payload.put("status", "no_mcp_servers_configured");
             return ToolResult.text(MAPPER.writeValueAsString(payload));
         }
         try {
@@ -1137,10 +1197,46 @@ public final class ToolDispatcher implements ToolExecutor {
         String server = required_string(input, "server", "MCP");
         String tool = required_string(input, "tool", "MCP");
         if (mcp_bridge.isEmpty()) {
-            return dispatch_unsupported_phase3("MCP", "MCP tool invocation bridge not ported in Phase 3");
+            ObjectNode payload = MAPPER.createObjectNode();
+            payload.put("server", server);
+            payload.put("tool", tool);
+            payload.put("status", "no_mcp_servers_configured");
+            return ToolResult.text(MAPPER.writeValueAsString(payload));
         }
         JsonNode arguments = input.hasNonNull("arguments") ? input.get("arguments") : null;
         return mcp_bridge.get().call_structured(server, tool, arguments);
+    }
+
+    private ToolResult dispatch_mcp_auth(JsonNode input) throws Exception {
+        String server = required_string(input, "server", "McpAuth");
+        if (mcp_bridge.isEmpty()) {
+            ObjectNode payload = MAPPER.createObjectNode();
+            payload.put("server", server);
+            payload.put("status", "no_mcp_servers_configured");
+            payload.put("message", "Server not registered. Configure an MCP server before requesting authentication.");
+            return ToolResult.text(MAPPER.writeValueAsString(payload));
+        }
+        try {
+            Optional<McpToolBridge.McpServerState> state =
+                    mcp_bridge.get().bridge().get_server(server);
+            ObjectNode payload = MAPPER.createObjectNode();
+            payload.put("server", server);
+            if (state.isPresent()) {
+                McpToolBridge.McpServerState s = state.get();
+                payload.put("status", s.status().toString());
+                s.server_info()
+                        .ifPresentOrElse(
+                                info -> payload.put("server_info", info), () -> payload.putNull("server_info"));
+                payload.put("tool_count", s.tools().size());
+                payload.put("resource_count", s.resources().size());
+            } else {
+                payload.put("status", "disconnected");
+                payload.put("message", "Server not registered. Use MCP tool to connect first.");
+            }
+            return ToolResult.text(MAPPER.writeValueAsString(payload));
+        } catch (RuntimeException error) {
+            return ToolResult.error(error.getMessage() == null ? error.toString() : error.getMessage());
+        }
     }
 
     // ----- Worker family -----

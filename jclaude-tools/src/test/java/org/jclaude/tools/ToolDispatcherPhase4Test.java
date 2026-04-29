@@ -55,7 +55,7 @@ class ToolDispatcherPhase4Test {
     // ----- MCP wiring -----
 
     @Test
-    void mcp_returns_phase_3_stub_when_bridge_absent(@TempDir Path workspace) throws IOException {
+    void mcp_returns_no_mcp_servers_configured_when_bridge_absent(@TempDir Path workspace) throws IOException {
         ToolDispatcher dispatcher = dispatcher_with(workspace, Optional.empty(), Optional.empty(), Optional.empty());
         ObjectNode input = MAPPER.createObjectNode();
         input.put("server", "demo");
@@ -63,9 +63,9 @@ class ToolDispatcherPhase4Test {
 
         ToolResult result = dispatcher.execute("MCP", input);
 
-        assertThat(result.is_error()).isTrue();
+        assertThat(result.is_error()).isFalse();
         JsonNode payload = MAPPER.readTree(result.output());
-        assertThat(payload.get("error").asText()).isEqualTo("not yet implemented");
+        assertThat(payload.get("status").asText()).isEqualTo("no_mcp_servers_configured");
     }
 
     @Test
@@ -119,7 +119,8 @@ class ToolDispatcherPhase4Test {
     }
 
     @Test
-    void read_mcp_resource_returns_phase_3_stub_when_bridge_absent(@TempDir Path workspace) throws IOException {
+    void read_mcp_resource_returns_no_mcp_servers_configured_when_bridge_absent(@TempDir Path workspace)
+            throws IOException {
         ToolDispatcher dispatcher = dispatcher_with(workspace, Optional.empty(), Optional.empty(), Optional.empty());
         ObjectNode input = MAPPER.createObjectNode();
         input.put("uri", "memory://hello");
@@ -129,7 +130,7 @@ class ToolDispatcherPhase4Test {
 
         assertThat(result.is_error()).isFalse();
         JsonNode payload = MAPPER.readTree(result.output());
-        assertThat(payload.get("error").asText()).isEqualTo("not yet implemented");
+        assertThat(payload.get("status").asText()).isEqualTo("no_mcp_servers_configured");
     }
 
     @Test

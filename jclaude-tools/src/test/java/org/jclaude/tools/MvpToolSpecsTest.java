@@ -42,28 +42,41 @@ class MvpToolSpecsTest {
     }
 
     @Test
-    void all_tool_specs_lists_at_least_fifty_nine_tools() {
-        List<ToolSpec> specs = MvpToolSpecs.all_tool_specs();
-
-        assertThat(specs).as("Phase 3 dispatch surface").hasSizeGreaterThanOrEqualTo(59);
-    }
-
-    @Test
-    void all_tool_specs_contains_phase_3_runtime_tools() {
+    void all_tool_specs_lists_exactly_fifty_tools_matching_rust() {
         List<String> names =
                 MvpToolSpecs.all_tool_specs().stream().map(ToolSpec::name).toList();
 
+        assertThat(names).hasSize(50);
         assertThat(names)
-                .contains(
+                .containsExactlyInAnyOrder(
+                        // Workspace files & shell (6).
+                        "bash",
+                        "read_file",
+                        "write_file",
+                        "edit_file",
+                        "glob_search",
+                        "grep_search",
+                        // Web (2).
                         "WebFetch",
                         "WebSearch",
+                        // Session/tasks/planning (11).
+                        "TodoWrite",
                         "Skill",
                         "Agent",
+                        "ToolSearch",
                         "NotebookEdit",
+                        "Sleep",
+                        "SendUserMessage",
                         "Config",
+                        "EnterPlanMode",
+                        "ExitPlanMode",
+                        "StructuredOutput",
+                        // Subprocess (2).
                         "REPL",
                         "PowerShell",
+                        // Interactive (1).
                         "AskUserQuestion",
+                        // Task registry (7).
                         "TaskCreate",
                         "RunTaskPacket",
                         "TaskGet",
@@ -71,24 +84,32 @@ class MvpToolSpecsTest {
                         "TaskStop",
                         "TaskUpdate",
                         "TaskOutput",
+                        // Worker registry (9).
+                        "WorkerCreate",
+                        "WorkerGet",
+                        "WorkerObserve",
+                        "WorkerResolveTrust",
+                        "WorkerAwaitReady",
+                        "WorkerSendPrompt",
+                        "WorkerRestart",
+                        "WorkerTerminate",
+                        "WorkerObserveCompletion",
+                        // Team / Cron (5).
                         "TeamCreate",
                         "TeamDelete",
                         "CronCreate",
                         "CronDelete",
                         "CronList",
+                        // LSP (1).
                         "LSP",
+                        // MCP (5).
                         "ListMcpResources",
                         "ReadMcpResource",
                         "McpAuth",
                         "RemoteTrigger",
                         "MCP",
-                        "TestingPermission",
-                        "WorkerCreate",
-                        "WorkerSendPrompt",
-                        "Brief",
-                        "EnterWorktree",
-                        "ExitWorktree",
-                        "Monitor");
+                        // Test-only (1).
+                        "TestingPermission");
     }
 
     @Test
@@ -135,7 +156,7 @@ class MvpToolSpecsTest {
     }
 
     @Test
-    void exposes_mvp_tools() {
+    void exposes_mvp_tools_in_full_surface() {
         List<String> names =
                 MvpToolSpecs.all_tool_specs().stream().map(ToolSpec::name).toList();
         assertThat(names)
@@ -161,5 +182,25 @@ class MvpToolSpecsTest {
                         "WorkerObserve",
                         "WorkerAwaitReady",
                         "WorkerSendPrompt");
+    }
+
+    @Test
+    void does_not_include_pre_port_extras() {
+        List<String> names =
+                MvpToolSpecs.all_tool_specs().stream().map(ToolSpec::name).toList();
+
+        // These were over-shot by the earlier port and are not in Rust's mvp_tool_specs.
+        assertThat(names)
+                .doesNotContain(
+                        "Brief",
+                        "EnterWorktree",
+                        "ExitWorktree",
+                        "Monitor",
+                        "mcp__claude_ai_Gmail__authenticate",
+                        "mcp__claude_ai_Gmail__complete_authentication",
+                        "mcp__claude_ai_Google_Calendar__authenticate",
+                        "mcp__claude_ai_Google_Calendar__complete_authentication",
+                        "mcp__claude_ai_Google_Drive__authenticate",
+                        "mcp__claude_ai_Google_Drive__complete_authentication");
     }
 }

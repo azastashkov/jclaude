@@ -12,13 +12,12 @@ import org.jclaude.tools.bridge.McpToolBridgeAdapter;
 /**
  * Catalogue of tool specs that the dispatcher can route. Mirrors the upstream Rust
  * {@code mvp_tool_specs()} function in {@code claw-code/rust/crates/tools/src/lib.rs}
- * (around L392) and is extended with a small set of harness-side deferred specs (Brief alias,
- * EnterWorktree/ExitWorktree/Monitor placeholders, common {@code mcp__claude_ai_*} authentication
- * stubs) so the {@link ToolSearch} surface still resolves them.
+ * (around L392) field-for-field — the canonical list contains exactly 50 specs, in the same names
+ * the Rust source ships with.
  *
- * <p>Phase 1 only shipped the 13-item MVP slice via {@link #mvp_tool_specs()}. Phase 3 keeps that
- * method intact for backward compatibility and adds {@link #all_tool_specs()} which returns the
- * full surface area the dispatcher routes today.
+ * <p>Phase 1 only shipped the 13-item MVP slice via {@link #mvp_tool_specs()}. The full Rust
+ * parity surface lives in {@link #all_tool_specs()} which returns all 50 specs the dispatcher
+ * routes today.
  */
 public final class MvpToolSpecs {
 
@@ -45,8 +44,14 @@ public final class MvpToolSpecs {
                         "Search for deferred or specialized tools by exact name or keywords.",
                         TOOL_SEARCH_SCHEMA),
                 spec("StructuredOutput", "Return structured output in the requested format.", STRUCTURED_OUTPUT_SCHEMA),
-                spec("EnterPlanMode", "Enable a worktree-local planning mode override.", PLAN_MODE_SCHEMA),
-                spec("ExitPlanMode", "Restore or clear the worktree-local planning mode override.", PLAN_MODE_SCHEMA),
+                spec(
+                        "EnterPlanMode",
+                        "Enable a worktree-local planning mode override and remember the previous local setting for ExitPlanMode.",
+                        PLAN_MODE_SCHEMA),
+                spec(
+                        "ExitPlanMode",
+                        "Restore or clear the worktree-local planning mode override created by EnterPlanMode.",
+                        PLAN_MODE_SCHEMA),
                 spec("SendUserMessage", "Send a message to the user.", SEND_USER_MESSAGE_SCHEMA));
     }
 
@@ -68,39 +73,60 @@ public final class MvpToolSpecs {
     }
 
     /**
-     * Returns the complete set of tool specs the Phase-3 dispatcher knows how to route. Includes
-     * the MVP slice, the Rust catalogue, and a handful of harness-side stubs whose schemas mirror
-     * the deferred-tool surface area so the model can discover them via {@link ToolSearch}.
+     * Returns the canonical 50-tool surface that mirrors the upstream Rust
+     * {@code mvp_tool_specs()} exactly (same names, same schema fields, same description text).
      */
     public static List<ToolSpec> all_tool_specs() {
-        List<ToolSpec> all = new ArrayList<>();
-        all.addAll(mvp_tool_specs());
+        List<ToolSpec> all = new ArrayList<>(50);
 
-        // Read-only tools beyond the MVP slice.
+        // Workspace files & shell — 6 tools.
+        all.add(spec("bash", "Execute a shell command in the current workspace.", BASH_SCHEMA));
+        all.add(spec("read_file", "Read a text file from the workspace.", READ_FILE_SCHEMA));
+        all.add(spec("write_file", "Write a text file in the workspace.", WRITE_FILE_SCHEMA));
+        all.add(spec("edit_file", "Replace text in a workspace file.", EDIT_FILE_SCHEMA));
+        all.add(spec("glob_search", "Find files by glob pattern.", GLOB_SEARCH_SCHEMA));
+        all.add(spec("grep_search", "Search file contents with a regex pattern.", GREP_SEARCH_SCHEMA));
+
+        // Web — 2 tools.
         all.add(spec(
                 "WebFetch",
                 "Fetch a URL, convert it into readable text, and answer a prompt about it.",
                 WEB_FETCH_SCHEMA));
         all.add(spec(
                 "WebSearch", "Search the web for current information and return cited results.", WEB_SEARCH_SCHEMA));
+
+        // Session/tasks/planning — 9 tools.
+        all.add(spec("TodoWrite", "Update the structured task list for the current session.", TODO_WRITE_SCHEMA));
         all.add(spec("Skill", "Load a local skill definition and its instructions.", SKILL_SCHEMA));
         all.add(spec("Agent", "Launch a specialized agent task and persist its handoff metadata.", AGENT_SCHEMA));
-        all.add(spec("NotebookEdit", "Replace, insert, or delete a cell in a Jupyter notebook.", NOTEBOOK_EDIT_SCHEMA));
-
-        // SendUserMessage alias kept for parity with Rust's "Brief" branch.
         all.add(spec(
-                "Brief", "Send a brief message to the user (alias of SendUserMessage).", SEND_USER_MESSAGE_SCHEMA));
+                "ToolSearch",
+                "Search for deferred or specialized tools by exact name or keywords.",
+                TOOL_SEARCH_SCHEMA));
+        all.add(spec("NotebookEdit", "Replace, insert, or delete a cell in a Jupyter notebook.", NOTEBOOK_EDIT_SCHEMA));
+        all.add(spec("Sleep", "Wait for a specified duration without holding a shell process.", SLEEP_SCHEMA));
+        all.add(spec("SendUserMessage", "Send a message to the user.", SEND_USER_MESSAGE_SCHEMA));
+        all.add(spec("Config", "Get or set Claude Code settings.", CONFIG_SCHEMA));
+        all.add(spec(
+                "EnterPlanMode",
+                "Enable a worktree-local planning mode override and remember the previous local setting for ExitPlanMode.",
+                PLAN_MODE_SCHEMA));
+        all.add(spec(
+                "ExitPlanMode",
+                "Restore or clear the worktree-local planning mode override created by EnterPlanMode.",
+                PLAN_MODE_SCHEMA));
+        all.add(spec(
+                "StructuredOutput", "Return structured output in the requested format.", STRUCTURED_OUTPUT_SCHEMA));
 
-        // Subprocess execution.
+        // Subprocess execution — 2 tools.
         all.add(spec("REPL", "Execute code in a REPL-like subprocess.", REPL_SCHEMA));
         all.add(spec("PowerShell", "Execute a PowerShell command with optional timeout.", POWERSHELL_SCHEMA));
 
-        // Config / interactive.
-        all.add(spec("Config", "Get or set Claude Code settings.", CONFIG_SCHEMA));
+        // Interactive — 1 tool.
         all.add(spec(
                 "AskUserQuestion", "Ask the user a question and wait for their response.", ASK_USER_QUESTION_SCHEMA));
 
-        // Task registry tools.
+        // Task registry — 7 tools.
         all.add(spec("TaskCreate", "Create a background task that runs in a separate subprocess.", TASK_CREATE_SCHEMA));
         all.add(spec(
                 "RunTaskPacket", "Create a background task from a structured task packet.", RUN_TASK_PACKET_SCHEMA));
@@ -110,37 +136,53 @@ public final class MvpToolSpecs {
         all.add(spec("TaskUpdate", "Send a message or update to a running background task.", TASK_UPDATE_SCHEMA));
         all.add(spec("TaskOutput", "Retrieve the output produced by a background task.", TASK_ID_SCHEMA));
 
-        // Worker registry tools (Phase-3 stubs — Worker registry not yet ported).
-        all.add(spec("WorkerCreate", "Create a coding worker boot session.", WORKER_CREATE_SCHEMA));
-        all.add(spec("WorkerGet", "Fetch the current worker boot state.", WORKER_ID_SCHEMA));
-        all.add(spec("WorkerObserve", "Feed a terminal snapshot into worker boot detection.", WORKER_OBSERVE_SCHEMA));
+        // Worker registry — 9 tools.
+        all.add(spec(
+                "WorkerCreate",
+                "Create a coding worker boot session with trust-gate and prompt-delivery guards.",
+                WORKER_CREATE_SCHEMA));
+        all.add(spec(
+                "WorkerGet", "Fetch the current worker boot state, last error, and event history.", WORKER_ID_SCHEMA));
+        all.add(spec(
+                "WorkerObserve",
+                "Feed a terminal snapshot into worker boot detection to resolve trust gates, ready handshakes, and prompt misdelivery.",
+                WORKER_OBSERVE_SCHEMA));
         all.add(spec(
                 "WorkerResolveTrust",
                 "Resolve a detected trust prompt so worker boot can continue.",
                 WORKER_ID_SCHEMA));
-        all.add(spec("WorkerAwaitReady", "Return the current ready-handshake verdict for a worker.", WORKER_ID_SCHEMA));
+        all.add(spec(
+                "WorkerAwaitReady",
+                "Return the current ready-handshake verdict for a coding worker.",
+                WORKER_ID_SCHEMA));
         all.add(spec(
                 "WorkerSendPrompt",
-                "Send a task prompt only after the worker reaches ready_for_prompt.",
+                "Send a task prompt only after the worker reaches ready_for_prompt; can replay a recovered prompt.",
                 WORKER_SEND_PROMPT_SCHEMA));
-        all.add(spec("WorkerRestart", "Restart worker boot state after a failed startup.", WORKER_ID_SCHEMA));
-        all.add(spec("WorkerTerminate", "Terminate a worker and mark the lane finished.", WORKER_ID_SCHEMA));
+        all.add(spec("WorkerRestart", "Restart worker boot state after a failed or stale startup.", WORKER_ID_SCHEMA));
+        all.add(spec(
+                "WorkerTerminate",
+                "Terminate a worker and mark the lane finished from the control plane.",
+                WORKER_ID_SCHEMA));
         all.add(spec(
                 "WorkerObserveCompletion",
-                "Report session completion to the worker.",
+                "Report session completion to the worker, classifying finish_reason into Finished or Failed (provider-degraded). Use after the opencode session completes to advance the worker to its terminal state.",
                 WORKER_OBSERVE_COMPLETION_SCHEMA));
 
-        // Team / Cron tools.
+        // Team / Cron — 5 tools.
         all.add(spec("TeamCreate", "Create a team of sub-agents for parallel task execution.", TEAM_CREATE_SCHEMA));
         all.add(spec("TeamDelete", "Delete a team and stop all its running tasks.", TEAM_DELETE_SCHEMA));
         all.add(spec("CronCreate", "Create a scheduled recurring task.", CRON_CREATE_SCHEMA));
         all.add(spec("CronDelete", "Delete a scheduled recurring task by ID.", CRON_DELETE_SCHEMA));
         all.add(spec("CronList", "List all scheduled recurring tasks.", EMPTY_OBJECT_SCHEMA));
 
-        // LSP.
-        all.add(spec("LSP", "Query Language Server Protocol for code intelligence.", LSP_SCHEMA));
+        // LSP — 1 tool.
+        all.add(spec(
+                "LSP",
+                "Query Language Server Protocol for code intelligence (symbols, references, diagnostics).",
+                LSP_SCHEMA));
 
-        // MCP family.
+        // MCP — 5 tools.
         all.add(spec(
                 "ListMcpResources", "List available resources from connected MCP servers.", LIST_MCP_RESOURCES_SCHEMA));
         all.add(spec(
@@ -150,43 +192,11 @@ public final class MvpToolSpecs {
         all.add(spec("RemoteTrigger", "Trigger a remote action or webhook endpoint.", REMOTE_TRIGGER_SCHEMA));
         all.add(spec("MCP", "Execute a tool provided by a connected MCP server.", MCP_SCHEMA));
 
-        // Test-only tool.
+        // Test-only — 1 tool.
         all.add(spec(
                 "TestingPermission",
                 "Test-only tool for verifying permission enforcement behavior.",
                 TESTING_PERMISSION_SCHEMA));
-
-        // Harness-side deferred tools surfaced for ToolSearch parity. These return
-        // canonical "not yet implemented" errors when invoked.
-        all.add(spec("EnterWorktree", "Enter a worktree-scoped session (deferred — Phase 4).", EMPTY_OBJECT_SCHEMA));
-        all.add(spec(
-                "ExitWorktree", "Exit the active worktree-scoped session (deferred — Phase 4).", EMPTY_OBJECT_SCHEMA));
-        all.add(spec(
-                "Monitor", "Stream notifications from a backgrounded process (deferred — Phase 4).", MONITOR_SCHEMA));
-        all.add(spec(
-                "mcp__claude_ai_Gmail__authenticate",
-                "Begin an MCP Gmail authentication flow (deferred — Phase 4).",
-                EMPTY_OBJECT_SCHEMA));
-        all.add(spec(
-                "mcp__claude_ai_Gmail__complete_authentication",
-                "Complete an MCP Gmail authentication flow (deferred — Phase 4).",
-                EMPTY_OBJECT_SCHEMA));
-        all.add(spec(
-                "mcp__claude_ai_Google_Calendar__authenticate",
-                "Begin an MCP Google Calendar authentication flow (deferred — Phase 4).",
-                EMPTY_OBJECT_SCHEMA));
-        all.add(spec(
-                "mcp__claude_ai_Google_Calendar__complete_authentication",
-                "Complete an MCP Google Calendar authentication flow (deferred — Phase 4).",
-                EMPTY_OBJECT_SCHEMA));
-        all.add(spec(
-                "mcp__claude_ai_Google_Drive__authenticate",
-                "Begin an MCP Google Drive authentication flow (deferred — Phase 4).",
-                EMPTY_OBJECT_SCHEMA));
-        all.add(spec(
-                "mcp__claude_ai_Google_Drive__complete_authentication",
-                "Complete an MCP Google Drive authentication flow (deferred — Phase 4).",
-                EMPTY_OBJECT_SCHEMA));
 
         return List.copyOf(all);
     }
@@ -265,7 +275,18 @@ public final class MvpToolSpecs {
               "properties": {
                 "pattern": { "type": "string" },
                 "path": { "type": "string" },
-                "output_mode": { "type": "string" }
+                "glob": { "type": "string" },
+                "output_mode": { "type": "string" },
+                "-B": { "type": "integer", "minimum": 0 },
+                "-A": { "type": "integer", "minimum": 0 },
+                "-C": { "type": "integer", "minimum": 0 },
+                "context": { "type": "integer", "minimum": 0 },
+                "-n": { "type": "boolean" },
+                "-i": { "type": "boolean" },
+                "type": { "type": "string" },
+                "head_limit": { "type": "integer", "minimum": 1 },
+                "offset": { "type": "integer", "minimum": 0 },
+                "multiline": { "type": "boolean" }
               },
               "required": ["pattern"],
               "additionalProperties": false
@@ -280,7 +301,12 @@ public final class MvpToolSpecs {
                 "command": { "type": "string" },
                 "timeout": { "type": "integer", "minimum": 1 },
                 "description": { "type": "string" },
-                "run_in_background": { "type": "boolean" }
+                "run_in_background": { "type": "boolean" },
+                "dangerouslyDisableSandbox": { "type": "boolean" },
+                "namespaceRestrictions": { "type": "boolean" },
+                "isolateNetwork": { "type": "boolean" },
+                "filesystemMode": { "type": "string", "enum": ["off", "workspace-only", "allow-list"] },
+                "allowedMounts": { "type": "array", "items": { "type": "string" } }
               },
               "required": ["command"],
               "additionalProperties": false
@@ -297,15 +323,15 @@ public final class MvpToolSpecs {
                   "items": {
                     "type": "object",
                     "properties": {
-                      "id": { "type": "string" },
                       "content": { "type": "string" },
+                      "activeForm": { "type": "string" },
                       "status": {
                         "type": "string",
                         "enum": ["pending", "in_progress", "completed"]
                       }
                     },
-                    "required": ["content", "status"],
-                    "additionalProperties": true
+                    "required": ["content", "activeForm", "status"],
+                    "additionalProperties": false
                   }
                 }
               },
@@ -361,9 +387,11 @@ public final class MvpToolSpecs {
             {
               "type": "object",
               "properties": {
-                "message": { "type": "string" }
+                "message": { "type": "string" },
+                "attachments": { "type": "array", "items": { "type": "string" } },
+                "status": { "type": "string", "enum": ["normal", "proactive"] }
               },
-              "required": ["message"],
+              "required": ["message", "status"],
               "additionalProperties": false
             }
             """;
@@ -524,9 +552,7 @@ public final class MvpToolSpecs {
               "properties": {
                 "objective": { "type": "string" },
                 "scope": { "type": "string" },
-                "scope_path": { "type": "string" },
                 "repo": { "type": "string" },
-                "worktree": { "type": "string" },
                 "branch_policy": { "type": "string" },
                 "acceptance_tests": { "type": "array", "items": { "type": "string" } },
                 "commit_policy": { "type": "string" },
@@ -612,7 +638,18 @@ public final class MvpToolSpecs {
               "properties": {
                 "worker_id": { "type": "string" },
                 "prompt": { "type": "string" },
-                "task_receipt": { "type": "object", "additionalProperties": true }
+                "task_receipt": {
+                  "type": "object",
+                  "properties": {
+                    "repo": { "type": "string" },
+                    "task_kind": { "type": "string" },
+                    "source_surface": { "type": "string" },
+                    "expected_artifacts": { "type": "array", "items": { "type": "string" } },
+                    "objective_preview": { "type": "string" }
+                  },
+                  "required": ["repo", "task_kind", "source_surface", "objective_preview"],
+                  "additionalProperties": false
+                }
               },
               "required": ["worker_id"],
               "additionalProperties": false
@@ -644,11 +681,10 @@ public final class MvpToolSpecs {
                   "items": {
                     "type": "object",
                     "properties": {
-                      "task_id": { "type": "string" },
                       "prompt": { "type": "string" },
                       "description": { "type": "string" }
                     },
-                    "additionalProperties": true
+                    "required": ["prompt"]
                   }
                 }
               },
@@ -702,7 +738,7 @@ public final class MvpToolSpecs {
               "properties": {
                 "action": {
                   "type": "string",
-                  "enum": ["symbols", "references", "diagnostics", "definition", "hover", "completion", "format"]
+                  "enum": ["symbols", "references", "diagnostics", "definition", "hover"]
                 },
                 "path": { "type": "string" },
                 "line": { "type": "integer", "minimum": 0 },
@@ -756,8 +792,8 @@ public final class MvpToolSpecs {
               "type": "object",
               "properties": {
                 "url": { "type": "string" },
-                "method": { "type": "string", "enum": ["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD"] },
-                "headers": { "type": "object", "additionalProperties": true },
+                "method": { "type": "string", "enum": ["GET", "POST", "PUT", "DELETE"] },
+                "headers": { "type": "object" },
                 "body": { "type": "string" }
               },
               "required": ["url"],
@@ -772,7 +808,7 @@ public final class MvpToolSpecs {
               "properties": {
                 "server": { "type": "string" },
                 "tool": { "type": "string" },
-                "arguments": { "type": "object", "additionalProperties": true }
+                "arguments": { "type": "object" }
               },
               "required": ["server", "tool"],
               "additionalProperties": false
@@ -788,20 +824,6 @@ public final class MvpToolSpecs {
               },
               "required": ["action"],
               "additionalProperties": false
-            }
-            """;
-
-    private static final String MONITOR_SCHEMA =
-            """
-            {
-              "type": "object",
-              "properties": {
-                "shell_id": { "type": "string" },
-                "stop_on_pattern": { "type": "string" },
-                "include_stdout": { "type": "boolean" }
-              },
-              "required": ["shell_id"],
-              "additionalProperties": true
             }
             """;
 }

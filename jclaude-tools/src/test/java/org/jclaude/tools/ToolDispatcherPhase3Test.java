@@ -356,17 +356,27 @@ class ToolDispatcherPhase3Test {
 
     @Test
     void config_dispatch_returns_get_response_for_known_setting(@TempDir Path workspace) throws IOException {
-        ToolDispatcher dispatcher = dispatcher_for(workspace);
-        ObjectNode input = MAPPER.createObjectNode();
-        input.put("setting", "theme");
+        String previous = System.getProperty("jclaude.config.home");
+        System.setProperty("jclaude.config.home", workspace.toString());
+        try {
+            ToolDispatcher dispatcher = dispatcher_for(workspace);
+            ObjectNode input = MAPPER.createObjectNode();
+            input.put("setting", "theme");
 
-        ToolResult result = dispatcher.execute("Config", input);
+            ToolResult result = dispatcher.execute("Config", input);
 
-        assertThat(result.is_error()).isFalse();
-        JsonNode payload = MAPPER.readTree(result.output());
-        assertThat(payload.get("setting").asText()).isEqualTo("theme");
-        assertThat(payload.get("operation").asText()).isEqualTo("get");
-        assertThat(payload.get("success").asBoolean()).isTrue();
+            assertThat(result.is_error()).isFalse();
+            JsonNode payload = MAPPER.readTree(result.output());
+            assertThat(payload.get("setting").asText()).isEqualTo("theme");
+            assertThat(payload.get("operation").asText()).isEqualTo("get");
+            assertThat(payload.get("success").asBoolean()).isTrue();
+        } finally {
+            if (previous == null) {
+                System.clearProperty("jclaude.config.home");
+            } else {
+                System.setProperty("jclaude.config.home", previous);
+            }
+        }
     }
 
     @Test
@@ -478,49 +488,49 @@ class ToolDispatcherPhase3Test {
     }
 
     @Test
-    void ask_user_question_returns_unsupported_phase_3_stub(@TempDir Path workspace) throws IOException {
+    void ask_user_question_returns_deferred_status(@TempDir Path workspace) throws IOException {
         ToolDispatcher dispatcher = dispatcher_for(workspace);
         ObjectNode input = MAPPER.createObjectNode();
         input.put("question", "Are we there yet?");
 
         ToolResult result = dispatcher.execute("AskUserQuestion", input);
 
-        assertThat(result.is_error()).isTrue();
+        assertThat(result.is_error()).isFalse();
         JsonNode payload = MAPPER.readTree(result.output());
-        assertThat(payload.get("error").asText()).isEqualTo("not yet implemented");
-        assertThat(payload.get("tool").asText()).isEqualTo("AskUserQuestion");
+        assertThat(payload.get("question").asText()).isEqualTo("Are we there yet?");
+        assertThat(payload.get("status").asText()).isEqualTo("deferred");
     }
 
     @Test
-    void mcp_tools_return_phase_3_stub(@TempDir Path workspace) throws IOException {
+    void mcp_tools_return_no_mcp_servers_configured_when_bridge_absent(@TempDir Path workspace) throws IOException {
         ToolDispatcher dispatcher = dispatcher_for(workspace);
 
         ToolResult list_result = dispatcher.execute("ListMcpResources", MAPPER.createObjectNode());
         assertThat(list_result.is_error()).isFalse();
         JsonNode list_payload = MAPPER.readTree(list_result.output());
-        assertThat(list_payload.get("error").asText()).isEqualTo("not yet implemented");
+        assertThat(list_payload.get("status").asText()).isEqualTo("no_mcp_servers_configured");
 
         ObjectNode read_input = MAPPER.createObjectNode();
         read_input.put("uri", "memory://demo");
         ToolResult read_result = dispatcher.execute("ReadMcpResource", read_input);
         assertThat(read_result.is_error()).isFalse();
         JsonNode read_payload = MAPPER.readTree(read_result.output());
-        assertThat(read_payload.get("error").asText()).isEqualTo("not yet implemented");
+        assertThat(read_payload.get("status").asText()).isEqualTo("no_mcp_servers_configured");
 
         ObjectNode auth_input = MAPPER.createObjectNode();
         auth_input.put("server", "demo");
         ToolResult auth_result = dispatcher.execute("McpAuth", auth_input);
-        assertThat(auth_result.is_error()).isTrue();
+        assertThat(auth_result.is_error()).isFalse();
         JsonNode auth_payload = MAPPER.readTree(auth_result.output());
-        assertThat(auth_payload.get("error").asText()).isEqualTo("not yet implemented");
+        assertThat(auth_payload.get("status").asText()).isEqualTo("no_mcp_servers_configured");
 
         ObjectNode mcp_input = MAPPER.createObjectNode();
         mcp_input.put("server", "demo");
         mcp_input.put("tool", "demo_tool");
         ToolResult mcp_result = dispatcher.execute("MCP", mcp_input);
-        assertThat(mcp_result.is_error()).isTrue();
+        assertThat(mcp_result.is_error()).isFalse();
         JsonNode mcp_payload = MAPPER.readTree(mcp_result.output());
-        assertThat(mcp_payload.get("error").asText()).isEqualTo("not yet implemented");
+        assertThat(mcp_payload.get("status").asText()).isEqualTo("no_mcp_servers_configured");
     }
 
     @Test
@@ -585,24 +595,20 @@ class ToolDispatcherPhase3Test {
     }
 
     @Test
-    void enter_worktree_returns_unsupported_phase_3_stub(@TempDir Path workspace) throws IOException {
+    void enter_worktree_now_falls_through_to_unsupported(@TempDir Path workspace) {
         ToolDispatcher dispatcher = dispatcher_for(workspace);
 
-        ToolResult result = dispatcher.execute("EnterWorktree", MAPPER.createObjectNode());
-
-        assertThat(result.is_error()).isTrue();
-        JsonNode payload = MAPPER.readTree(result.output());
-        assertThat(payload.get("error").asText()).isEqualTo("not yet implemented");
+        org.assertj.core.api.Assertions.assertThatThrownBy(
+                        () -> dispatcher.execute("EnterWorktree", MAPPER.createObjectNode()))
+                .isInstanceOf(UnsupportedToolException.class);
     }
 
     @Test
-    void mcp_claude_ai_authenticators_return_unsupported_phase_3_stub(@TempDir Path workspace) throws IOException {
+    void mcp_claude_ai_authenticator_now_falls_through_to_unsupported(@TempDir Path workspace) {
         ToolDispatcher dispatcher = dispatcher_for(workspace);
 
-        ToolResult result = dispatcher.execute("mcp__claude_ai_Gmail__authenticate", MAPPER.createObjectNode());
-
-        assertThat(result.is_error()).isTrue();
-        JsonNode payload = MAPPER.readTree(result.output());
-        assertThat(payload.get("error").asText()).isEqualTo("not yet implemented");
+        org.assertj.core.api.Assertions.assertThatThrownBy(
+                        () -> dispatcher.execute("mcp__claude_ai_Gmail__authenticate", MAPPER.createObjectNode()))
+                .isInstanceOf(UnsupportedToolException.class);
     }
 }
