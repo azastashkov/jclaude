@@ -164,29 +164,47 @@ public final class AnsiPalette {
         return paint(DIM + GREY, text);
     }
 
-    /** Syntax-highlight: comment (dim grey). */
+    // ----- JetBrains IntelliJ IDEA "Islands Dark" theme palette (24-bit ANSI) -----
+    // Used for syntax highlighting inside fenced code blocks. Truecolor; emitted as 38;2;R;G;Bm
+    // sequences which modern terminals render directly. Older terminals will downsample to the
+    // nearest 256-color slot.
+
+    /** Islands Dark — keywords (#CF8E6D, warm orange). */
+    public static final String ISLANDS_KEYWORD = ESC + "38;2;207;142;109m";
+    /** Islands Dark — string literals (#6AAB73, muted green). */
+    public static final String ISLANDS_STRING = ESC + "38;2;106;171;115m";
+    /** Islands Dark — number literals (#2AACB8, teal). */
+    public static final String ISLANDS_NUMBER = ESC + "38;2;42;172;184m";
+    /** Islands Dark — types / built-ins (#FFC66D, warm yellow). */
+    public static final String ISLANDS_TYPE = ESC + "38;2;255;198;109m";
+    /** Islands Dark — comments (#7A7E85, medium grey). */
+    public static final String ISLANDS_COMMENT = ESC + "38;2;122;126;133m";
+    /** Islands Dark — default text foreground (#BCBEC4, light grey). */
+    public static final String ISLANDS_FOREGROUND = ESC + "38;2;188;190;196m";
+
+    /** Syntax-highlight: comment (Islands Dark grey). */
     public String code_comment(String text) {
-        return paint(DIM + GREY, text);
+        return paint(ISLANDS_COMMENT, text);
     }
 
-    /** Syntax-highlight: string literal (green). */
+    /** Syntax-highlight: string literal (Islands Dark green). */
     public String code_string(String text) {
-        return paint(GREEN, text);
+        return paint(ISLANDS_STRING, text);
     }
 
-    /** Syntax-highlight: number literal (magenta). */
+    /** Syntax-highlight: number literal (Islands Dark teal). */
     public String code_number(String text) {
-        return paint(MAGENTA, text);
+        return paint(ISLANDS_NUMBER, text);
     }
 
-    /** Syntax-highlight: language keyword (cyan). */
+    /** Syntax-highlight: language keyword (Islands Dark orange). */
     public String code_keyword(String text) {
-        return paint(CYAN, text);
+        return paint(ISLANDS_KEYWORD, text);
     }
 
-    /** Syntax-highlight: type or built-in name (yellow). */
+    /** Syntax-highlight: type or built-in name (Islands Dark yellow). */
     public String code_type(String text) {
-        return paint(YELLOW, text);
+        return paint(ISLANDS_TYPE, text);
     }
 
     /** Table border — dim cyan per the Rust theme. */
