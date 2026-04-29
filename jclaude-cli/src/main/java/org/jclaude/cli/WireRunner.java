@@ -254,7 +254,11 @@ public final class WireRunner {
     }
 
     static List<ToolSpec> filtered_tool_specs(String allowed_csv) {
-        List<ToolSpec> all = MvpToolSpecs.mvp_tool_specs();
+        // Expose the full 50-tool Rust-parity catalog (read/write/edit/glob/grep/bash + WebFetch
+        // + WebSearch + Task*/Worker*/Team*/Cron*/LSP/MCP* + Skill/Agent/Config/REPL/PowerShell +
+        // NotebookEdit + AskUserQuestion + RemoteTrigger + …). Without this the model only saw
+        // the 13 MVP names and would fall back to ToolSearch when asked to fetch a URL.
+        List<ToolSpec> all = MvpToolSpecs.all_tool_specs();
         if (allowed_csv == null || allowed_csv.isBlank()) {
             return all;
         }
@@ -315,12 +319,13 @@ public final class WireRunner {
         }
 
         if (allowed_csv != null && !allowed_csv.isBlank()) {
-            // Whitelist: deny every MVP tool not in the CSV. Plugin tools are always
-            // permitted because they're declared via settings.json (the tighter,
-            // explicit configuration boundary).
+            // Whitelist: deny every catalog tool not in the CSV. Plugin tools are always
+            // permitted because they're declared via settings.json (the tighter, explicit
+            // configuration boundary). Uses the full all_tool_specs() catalog so non-MVP tools
+            // (WebFetch, Worker*, Cron*, …) are also subject to the allowlist.
             Set<String> allowed = parse_csv(allowed_csv);
             List<String> deny_rules = new ArrayList<>();
-            for (ToolSpec spec : MvpToolSpecs.mvp_tool_specs()) {
+            for (ToolSpec spec : MvpToolSpecs.all_tool_specs()) {
                 if (!allowed.contains(spec.name())) {
                     deny_rules.add(spec.name());
                 }

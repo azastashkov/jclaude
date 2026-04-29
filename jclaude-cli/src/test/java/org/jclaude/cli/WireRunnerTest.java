@@ -41,17 +41,20 @@ final class WireRunnerTest {
 
     @Test
     void filtered_tool_specs_skips_unknown_names() {
+        // The filter is order-preserving over the full all_tool_specs() catalog (50 entries),
+        // so we assert membership rather than relative position — bash and read_file may sit
+        // in any order in the catalog.
         List<ToolSpec> filtered = WireRunner.filtered_tool_specs("read_file,does_not_exist,bash");
 
         List<String> names = filtered.stream().map(ToolSpec::name).toList();
-        assertThat(names).containsExactly("read_file", "bash");
+        assertThat(names).containsExactlyInAnyOrder("read_file", "bash");
     }
 
     @Test
     void filtered_tool_specs_trims_whitespace_in_csv_entries() {
         List<ToolSpec> filtered = WireRunner.filtered_tool_specs("  read_file ,  bash  ");
 
-        assertThat(filtered.stream().map(ToolSpec::name)).containsExactly("read_file", "bash");
+        assertThat(filtered.stream().map(ToolSpec::name)).containsExactlyInAnyOrder("read_file", "bash");
     }
 
     @Test
