@@ -88,8 +88,11 @@ public final class ToolResultBox {
 
         StringBuilder builder = new StringBuilder();
         // Header: ╭─ name ─...─╮
+        // Total visible width is `interior + 3` to match body lines (│ + space + content padded to
+        // interior + │) and the footer (╰ + interior+1 dashes + ╯). The header itself is
+        // ╭ + ─ + " name " + N×─ + ╮, so N = interior - visible(" name ").
         String header_label = safe_name.isEmpty() ? "" : (" " + safe_name + " ");
-        int header_dashes_after = Math.max(1, interior - visible_length(header_label) - 1);
+        int header_dashes_after = Math.max(1, interior - visible_length(header_label));
         String header_line = CORNER_TOP_LEFT
                 + HORIZONTAL
                 + header_label

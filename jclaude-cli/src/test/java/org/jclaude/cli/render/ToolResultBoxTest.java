@@ -127,4 +127,23 @@ final class ToolResultBoxTest {
         java.util.List<String> chunks = ToolResultBox.soft_wrap("hello world", 100);
         assertThat(chunks).containsExactly("hello world");
     }
+
+    @Test
+    void header_right_corner_aligns_with_footer_and_body_right_borders() {
+        ToolResultBox box = new ToolResultBox(AnsiPalette.with_color_disabled());
+
+        String rendered = box.render("read_file", "this is a moderately long body line for the box", false);
+
+        String[] lines = rendered.split("\n");
+        assertThat(lines).isNotEmpty();
+        // Header ends with ╮, body lines end with │, footer ends with ╯ — all three must occupy
+        // the same visible column. We compute visible length so palette ANSI escapes don't skew.
+        int header_width = AnsiPalette.visible_width(lines[0]);
+        for (int i = 1; i < lines.length - 1; i++) {
+            int body_width = AnsiPalette.visible_width(lines[i]);
+            assertThat(body_width).as("body line %d", i).isEqualTo(header_width);
+        }
+        int footer_width = AnsiPalette.visible_width(lines[lines.length - 1]);
+        assertThat(footer_width).isEqualTo(header_width);
+    }
 }
