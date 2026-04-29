@@ -63,16 +63,13 @@ public final class ToolResultPrettyPrinter {
         return sb.toString();
     }
 
+    // WriteFile.Output = (kind, file_path, content, structured_patch, original_file).
     private static String format_write_file(JsonNode node, String fallback) {
         String path = node.path("file_path").asText(null);
-        if (path == null) {
-            path = node.path("file").path("file_path").asText(null);
-        }
         if (path == null) {
             return fallback;
         }
         String kind = node.path("kind").asText("");
-        long size = node.path("bytes_written").asLong(-1);
         StringBuilder sb = new StringBuilder();
         if ("create".equalsIgnoreCase(kind)) {
             sb.append("Created ").append(path);
@@ -81,70 +78,90 @@ public final class ToolResultPrettyPrinter {
         } else {
             sb.append("Wrote ").append(path);
         }
-        if (size >= 0) {
-            sb.append(" (").append(size).append(" bytes)");
+        // Derive size from the content field when present (the dispatcher always serializes it).
+        String content = node.path("content").asText(null);
+        if (content != null) {
+            sb.append(" (")
+                    .append(content.getBytes(java.nio.charset.StandardCharsets.UTF_8).length)
+                    .append(" bytes)");
         }
         return sb.toString();
     }
 
+    // EditFile.Output = (file_path, old_string, new_string, original_file, structured_patch,
+    //                    user_modified, replace_all). Number of replacements = patch hunk count.
     private static String format_edit_file(JsonNode node, String fallback) {
         String path = node.path("file_path").asText(null);
         if (path == null) {
             return fallback;
         }
-        long replacements = node.path("replacements").asLong(-1);
+        JsonNode patch = node.path("structured_patch");
+        long hunks = patch.isArray() ? patch.size() : -1;
         StringBuilder sb = new StringBuilder();
         sb.append("Edited ").append(path);
-        if (replacements >= 0) {
+        if (hunks >= 0) {
             sb.append(" (")
-                    .append(replacements)
-                    .append(" replacement")
-                    .append(replacements == 1 ? "" : "s")
+                    .append(hunks)
+                    .append(" hunk")
+                    .append(hunks == 1 ? "" : "s")
                     .append(")");
         }
         return sb.toString();
     }
 
+    // GlobSearch.Output = (duration_ms, num_files, filenames, truncated).
     private static String format_glob_search(JsonNode node, String fallback) {
-        JsonNode matches = node.path("matches");
-        if (!matches.isArray()) {
+        JsonNode filenames = node.path("filenames");
+        if (!filenames.isArray()) {
             return fallback;
         }
+        int n = filenames.size();
         StringBuilder sb = new StringBuilder();
-        sb.append(matches.size())
-                .append(" match")
-                .append(matches.size() == 1 ? "" : "es")
-                .append(":");
-        for (JsonNode m : matches) {
+        sb.append(n).append(n == 1 ? " file" : " files");
+        if (node.path("truncated").asBoolean(false)) {
+            sb.append(" (truncated)");
+        }
+        if (n == 0) {
+            return sb.toString();
+        }
+        sb.append(":");
+        for (JsonNode m : filenames) {
             sb.append('\n').append(m.asText());
         }
         return sb.toString();
     }
 
+    // GrepSearch.Output = (mode, num_files, filenames, content, num_lines, num_matches).
+    // Three output modes: "files_with_matches" → list filenames; "content" → show content/lines;
+    // "count" → "N occurrences across M files".
     private static String format_grep_search(JsonNode node, String fallback) {
-        // GrepSearch.Output may carry mode + matches/lines/count depending on output_mode.
-        if (node.has("count")) {
-            return node.path("count").asLong(0) + " occurrence"
-                    + (node.path("count").asLong(0) == 1 ? "" : "s");
+        String mode = node.path("mode").asText("");
+        int num_files = node.path("num_files").asInt(0);
+        JsonNode filenames = node.path("filenames");
+        JsonNode content = node.path("content");
+        JsonNode num_matches = node.path("num_matches");
+        JsonNode num_lines = node.path("num_lines");
+
+        if ("count".equals(mode) && num_matches.isInt()) {
+            int total = num_matches.asInt();
+            return total + (total == 1 ? " occurrence" : " occurrences") + " across " + num_files
+                    + (num_files == 1 ? " file" : " files");
         }
-        JsonNode matches = node.path("matches");
-        if (matches.isArray()) {
-            StringBuilder sb = new StringBuilder();
-            sb.append(matches.size())
-                    .append(" match")
-                    .append(matches.size() == 1 ? "" : "es")
-                    .append(":");
-            for (JsonNode m : matches) {
-                sb.append('\n').append(m.asText());
+        if ("content".equals(mode) && content.isTextual()) {
+            return content.asText();
+        }
+        if (("content".equals(mode) || "files_with_matches".equals(mode)) && num_lines.isInt() && content.isTextual()) {
+            return content.asText() + "\n[" + num_lines.asInt() + " lines]";
+        }
+        if (filenames.isArray()) {
+            int n = filenames.size();
+            if (n == 0) {
+                return "no matches";
             }
-            return sb.toString();
-        }
-        JsonNode lines = node.path("lines");
-        if (lines.isArray()) {
             StringBuilder sb = new StringBuilder();
-            for (int i = 0; i < lines.size(); i++) {
-                if (i > 0) sb.append('\n');
-                sb.append(lines.get(i).asText());
+            sb.append(n).append(n == 1 ? " file" : " files").append(" with matches:");
+            for (JsonNode m : filenames) {
+                sb.append('\n').append(m.asText());
             }
             return sb.toString();
         }
