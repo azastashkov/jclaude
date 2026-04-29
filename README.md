@@ -23,7 +23,16 @@ OPENAI_BASE_URL=http://localhost:11434/v1 OPENAI_API_KEY=ollama \
     -p "Write hello.txt with content: hi"
 ```
 
-Or launch the interactive REPL by omitting `-p`.
+Launch the interactive REPL by omitting `-p` (and any positional prompt):
+
+```bash
+OPENAI_BASE_URL=http://localhost:11434/v1 OPENAI_API_KEY=ollama \
+  ./jclaude-cli/build/install/jclaude/bin/jclaude \
+    --model openai/qwen3-coder:30b-a3b-fp16 \
+    --permission-mode workspace-write
+```
+
+You'll get a JLine 3 line editor (prompt `>`) with history at `~/.jclaude/history`, tab completion over the 139 slash command specs, and streaming responses rendered through the markdown + ANSI pipeline. `/exit` or Ctrl+D quits.
 
 ## Modules
 
