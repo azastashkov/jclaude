@@ -600,124 +600,17 @@ public final class ToolDispatcher implements ToolExecutor {
             return ToolResult.text(MAPPER.writeValueAsString(no_backend_payload(query)));
         }
 
-        // Backend chain: Google Custom Search (if GOOGLE_API_KEY+GOOGLE_CSE_ID configured) →
-        // DuckDuckGo HTML scrape → graceful no_backend payload. We try each in order and return
-        // the first that yields populated results; if every backend yields zero rows or errors,
-        // we surface a no_backend response so the model can ask the user how to configure search.
-        java.util.List<String> attempts = new java.util.ArrayList<>();
-        Exception last_error = null;
-        if (google_credentials_configured()) {
-            try {
-                ObjectNode google = google_search(query, limit);
-                if ("ok".equals(google.path("status").asText())) {
-                    return ToolResult.text(MAPPER.writeValueAsString(google));
-                }
-                attempts.add("google:" + google.path("status").asText("?"));
-            } catch (Exception e) {
-                last_error = e;
-                attempts.add("google:error");
-            }
-        } else {
-            attempts.add("google:no_credentials");
-        }
-
         try {
-            ObjectNode ddg = duckduckgo_search(query, limit);
-            if ("ok".equals(ddg.path("status").asText())) {
-                return ToolResult.text(MAPPER.writeValueAsString(ddg));
-            }
-            attempts.add("duckduckgo:" + ddg.path("status").asText("?"));
-        } catch (Exception e) {
-            last_error = e;
-            attempts.add("duckduckgo:error");
+            return ToolResult.text(MAPPER.writeValueAsString(duckduckgo_search(query, limit)));
+        } catch (Exception network_failure) {
+            // Treat any transport / parse error as "no backend reachable" — surface a structured
+            // payload (rather than throwing) so the model can fall back gracefully.
+            ObjectNode fallback = no_backend_payload(query);
+            fallback.put(
+                    "error",
+                    network_failure.getMessage() == null ? network_failure.toString() : network_failure.getMessage());
+            return ToolResult.text(MAPPER.writeValueAsString(fallback));
         }
-
-        // All backends drained; emit a structured no_backend with the attempt log so the model
-        // can see exactly which backends were tried and why.
-        ObjectNode fallback = no_backend_payload(query);
-        fallback.put(
-                "message",
-                "WebSearch backends exhausted (" + String.join(", ", attempts)
-                        + "). Set GOOGLE_API_KEY+GOOGLE_CSE_ID to enable Google Custom Search.");
-        if (last_error != null) {
-            fallback.put("error", last_error.getMessage() == null ? last_error.toString() : last_error.getMessage());
-        }
-        return ToolResult.text(MAPPER.writeValueAsString(fallback));
-    }
-
-    private static boolean google_credentials_configured() {
-        return first_non_empty(System.getenv("GOOGLE_API_KEY"), System.getProperty("jclaude.google.api_key")) != null
-                && first_non_empty(System.getenv("GOOGLE_CSE_ID"), System.getProperty("jclaude.google.cse_id")) != null;
-    }
-
-    /**
-     * Google Custom Search JSON API backend. Requires {@code GOOGLE_API_KEY} (or
-     * {@code -Djclaude.google.api_key=...}) and {@code GOOGLE_CSE_ID} (or
-     * {@code -Djclaude.google.cse_id=...}). Free quota is 100 queries/day per API key. CSE setup:
-     * <a href="https://programmablesearchengine.google.com/">programmablesearchengine.google.com</a>;
-     * key: <a href="https://developers.google.com/custom-search/v1/introduction">developers.google.com/custom-search</a>.
-     */
-    private static ObjectNode google_search(String query, int limit) throws Exception {
-        String api_key = first_non_empty(System.getenv("GOOGLE_API_KEY"), System.getProperty("jclaude.google.api_key"));
-        String cse_id = first_non_empty(System.getenv("GOOGLE_CSE_ID"), System.getProperty("jclaude.google.cse_id"));
-        long started = System.nanoTime();
-        int num = Math.max(1, Math.min(limit, 10)); // CSE caps `num` at 10 per request.
-        java.net.URI uri = java.net.URI.create("https://www.googleapis.com/customsearch/v1?q="
-                + java.net.URLEncoder.encode(query, java.nio.charset.StandardCharsets.UTF_8)
-                + "&key=" + java.net.URLEncoder.encode(api_key, java.nio.charset.StandardCharsets.UTF_8)
-                + "&cx=" + java.net.URLEncoder.encode(cse_id, java.nio.charset.StandardCharsets.UTF_8)
-                + "&num=" + num);
-        java.net.http.HttpClient client = java.net.http.HttpClient.newBuilder()
-                .followRedirects(java.net.http.HttpClient.Redirect.NORMAL)
-                .connectTimeout(java.time.Duration.ofSeconds(10))
-                .build();
-        java.net.http.HttpRequest request = java.net.http.HttpRequest.newBuilder(uri)
-                .timeout(java.time.Duration.ofSeconds(15))
-                .header("User-Agent", "jclaude/0.1")
-                .header("Accept", "application/json")
-                .GET()
-                .build();
-        java.net.http.HttpResponse<String> response =
-                client.send(request, java.net.http.HttpResponse.BodyHandlers.ofString());
-
-        JsonNode body = MAPPER.readTree(response.body());
-        com.fasterxml.jackson.databind.node.ArrayNode results = MAPPER.createArrayNode();
-        JsonNode items = body.path("items");
-        if (items.isArray()) {
-            for (JsonNode item : items) {
-                ObjectNode row = MAPPER.createObjectNode();
-                row.put("title", item.path("title").asText(""));
-                row.put("url", item.path("link").asText(""));
-                row.put("snippet", item.path("snippet").asText(""));
-                results.add(row);
-            }
-        }
-        double seconds = (System.nanoTime() - started) / 1_000_000_000.0;
-        ObjectNode payload = MAPPER.createObjectNode();
-        payload.put("query", query);
-        payload.put("duration_seconds", Math.round(seconds * 1000.0) / 1000.0);
-        payload.set("results", results);
-        if (body.has("error")) {
-            payload.put("status", "error");
-            payload.put(
-                    "message",
-                    "Google Custom Search returned an error: "
-                            + body.path("error").path("message").asText("unknown"));
-        } else if (results.size() == 0) {
-            payload.put("status", "no_results");
-        } else {
-            payload.put("status", "ok");
-        }
-        return payload;
-    }
-
-    private static String first_non_empty(String... candidates) {
-        for (String c : candidates) {
-            if (c != null && !c.isBlank()) {
-                return c.trim();
-            }
-        }
-        return null;
     }
 
     private static ObjectNode no_backend_payload(String query) {
@@ -731,57 +624,62 @@ public final class ToolDispatcher implements ToolExecutor {
     }
 
     /**
-     * DuckDuckGo HTML backend. Mirrors the Rust source's behavior: GET the html.duckduckgo.com
-     * mirror, regex out result blocks, URL-decode the redirect target. Stays purely in JDK
-     * primitives — no Jsoup, no extra deps.
+     * DuckDuckGo Instant Answer JSON API. Documented at
+     * <a href="https://duckduckgo.com/api">duckduckgo.com/api</a>. No auth, no rate-limit. Returns
+     * an Abstract (Wikipedia-style summary) plus RelatedTopics — a list of {FirstURL, Text} entries
+     * including nested category {Topics:[…]} blocks which we flatten.
+     *
+     * <p>Trade-off vs HTML scraping: the Instant Answer API returns fewer rows than a SERP and
+     * skews toward encyclopedic queries. But it's stable, doesn't require browser headers, and is
+     * never blocked by an anomaly captcha. The HTML endpoint
+     * (html.duckduckgo.com / lite.duckduckgo.com) gates non-browser traffic behind anomaly.js so
+     * it's not a viable alternative.
      */
     private static ObjectNode duckduckgo_search(String query, int limit) throws Exception {
         long started = System.nanoTime();
-        java.net.URI uri = java.net.URI.create("https://html.duckduckgo.com/html/?q="
-                + java.net.URLEncoder.encode(query, java.nio.charset.StandardCharsets.UTF_8));
+        java.net.URI uri = java.net.URI.create("https://api.duckduckgo.com/?q="
+                + java.net.URLEncoder.encode(query, java.nio.charset.StandardCharsets.UTF_8)
+                + "&format=json&no_html=1&no_redirect=1&t=jclaude");
         java.net.http.HttpClient client = java.net.http.HttpClient.newBuilder()
                 .followRedirects(java.net.http.HttpClient.Redirect.NORMAL)
                 .connectTimeout(java.time.Duration.ofSeconds(10))
                 .build();
         java.net.http.HttpRequest request = java.net.http.HttpRequest.newBuilder(uri)
                 .timeout(java.time.Duration.ofSeconds(15))
-                .header(
-                        "User-Agent",
-                        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) jclaude/0.1")
-                .header("Accept", "text/html,application/xhtml+xml")
-                .header("Accept-Language", "en-US,en;q=0.9")
+                .header("User-Agent", "jclaude/0.1")
+                .header("Accept", "application/json")
                 .GET()
                 .build();
         java.net.http.HttpResponse<String> response =
                 client.send(request, java.net.http.HttpResponse.BodyHandlers.ofString());
-        String body = response.body();
-
-        // Anchor of every result row: <a ... class="result__a" href="<redirect>">title</a>.
-        // Snippet usually follows in <a class="result__snippet"> or a div with that class.
-        java.util.regex.Pattern anchor = java.util.regex.Pattern.compile(
-                "<a[^>]*class=\"[^\"]*result__a[^\"]*\"[^>]*href=\"([^\"]+)\"[^>]*>(.*?)</a>",
-                java.util.regex.Pattern.DOTALL);
-        java.util.regex.Pattern snippet = java.util.regex.Pattern.compile(
-                "<a[^>]*class=\"[^\"]*result__snippet[^\"]*\"[^>]*>(.*?)</a>", java.util.regex.Pattern.DOTALL);
-
-        java.util.regex.Matcher anchor_match = anchor.matcher(body);
-        java.util.regex.Matcher snippet_match = snippet.matcher(body);
+        JsonNode body = MAPPER.readTree(response.body());
 
         com.fasterxml.jackson.databind.node.ArrayNode results = MAPPER.createArrayNode();
-        int collected = 0;
-        while (collected < limit && anchor_match.find()) {
-            String href = decode_ddg_redirect(anchor_match.group(1));
-            String title = strip_html(anchor_match.group(2));
-            String snip = "";
-            if (snippet_match.find(anchor_match.end())) {
-                snip = strip_html(snippet_match.group(1));
-            }
+
+        // 1. Abstract (Wikipedia-style answer). Always include first when present.
+        String abstract_url = body.path("AbstractURL").asText("");
+        String abstract_text = body.path("AbstractText").asText("");
+        String heading = body.path("Heading").asText("");
+        if (!abstract_url.isEmpty() && (!abstract_text.isEmpty() || !heading.isEmpty())) {
             ObjectNode row = MAPPER.createObjectNode();
-            row.put("title", title);
-            row.put("url", href);
-            row.put("snippet", snip);
+            row.put("title", heading.isEmpty() ? query : heading);
+            row.put("url", abstract_url);
+            row.put("snippet", abstract_text);
             results.add(row);
-            collected++;
+        }
+
+        // 2. RelatedTopics — flat or nested under "Topics".
+        for (JsonNode topic : body.path("RelatedTopics")) {
+            if (results.size() >= limit) break;
+            if (topic.has("Topics")) {
+                // Category bucket; expand its children.
+                for (JsonNode child : topic.path("Topics")) {
+                    if (results.size() >= limit) break;
+                    add_ddg_topic(results, child);
+                }
+            } else {
+                add_ddg_topic(results, topic);
+            }
         }
 
         double seconds = (System.nanoTime() - started) / 1_000_000_000.0;
@@ -791,35 +689,36 @@ public final class ToolDispatcher implements ToolExecutor {
         payload.set("results", results);
         payload.put("status", results.size() > 0 ? "ok" : "no_results");
         if (results.size() == 0) {
-            payload.put("message", "DuckDuckGo returned no parseable results for query: " + query);
+            payload.put(
+                    "message",
+                    "DuckDuckGo Instant Answer API returned no rows for query: " + query
+                            + " (the API skews toward encyclopedic / definitional queries)");
         }
         return payload;
     }
 
-    /** DDG wraps real URLs in `/l/?uddg=<encoded>&...`. Unwrap when present. */
-    private static String decode_ddg_redirect(String href) {
-        if (href == null || href.isEmpty()) {
-            return href;
+    private static void add_ddg_topic(com.fasterxml.jackson.databind.node.ArrayNode results, JsonNode topic) {
+        String first_url = topic.path("FirstURL").asText("");
+        String text = topic.path("Text").asText("");
+        if (first_url.isEmpty()) return;
+        // Derive a title from the first sentence / first dash-prefixed segment of Text.
+        String title = first_url;
+        int dash = text.indexOf(" - ");
+        if (dash > 0) {
+            title = text.substring(0, dash).trim();
+        } else if (!text.isEmpty()) {
+            int period = text.indexOf('.');
+            title = period > 0 ? text.substring(0, period).trim() : text;
         }
-        // DDG sometimes returns //duckduckgo.com/l/?... — normalize to absolute.
-        String normalized = href.startsWith("//") ? "https:" + href : href;
-        int q = normalized.indexOf("uddg=");
-        if (q < 0) {
-            return normalized;
-        }
-        int amp = normalized.indexOf('&', q);
-        String encoded = amp < 0 ? normalized.substring(q + 5) : normalized.substring(q + 5, amp);
-        try {
-            return java.net.URLDecoder.decode(encoded, java.nio.charset.StandardCharsets.UTF_8);
-        } catch (Exception ignored) {
-            return normalized;
-        }
+        ObjectNode row = MAPPER.createObjectNode();
+        row.put("title", title);
+        row.put("url", first_url);
+        row.put("snippet", text);
+        results.add(row);
     }
 
-    /**
-     * Strip HTML tags + decode the handful of entities DDG emits in result text. Keeps the
-     * impl regex-only so we don't pull a parser dep just for snippet cleanup.
-     */
+    /** Legacy entity-stripper retained for backward compatibility; unused by the JSON backend. */
+    @SuppressWarnings("unused")
     private static String strip_html(String html) {
         if (html == null) {
             return "";
