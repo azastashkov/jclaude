@@ -81,7 +81,8 @@ public final class TerminalRenderer {
             }
             for (ContentBlock block : message.blocks()) {
                 if (block instanceof ContentBlock.ToolResult result) {
-                    out.println(box.render(result.tool_name(), result.output(), result.is_error()));
+                    String pretty = ToolResultPrettyPrinter.format(result.tool_name(), result.output());
+                    out.println(box.render(result.tool_name(), pretty, result.is_error()));
                 }
             }
         }

@@ -38,10 +38,14 @@ public final class ToolResultBox {
         this.palette = palette;
     }
 
+    /** Default visible width cap for box body lines (excluding borders + icon prefix). */
+    private static final int DEFAULT_MAX_BODY_WIDTH = 100;
+
     /**
      * Format a tool-result block. Multi-line output is split on {@code \n} and each line wrapped in
      * a side border; the box auto-sizes to the longest visible content (header label or any body
-     * line, whichever is wider).
+     * line, whichever is wider). Long lines are soft-wrapped at {@value #DEFAULT_MAX_BODY_WIDTH}
+     * visible characters so a single huge line doesn't blow out the terminal.
      */
     public String render(String tool_name, String output, boolean is_error) {
         return render(tool_name, output, is_error, palette);
@@ -57,8 +61,10 @@ public final class ToolResultBox {
         if (safe_output.isEmpty()) {
             body_lines.add("");
         } else {
-            for (String line : safe_output.split("\n", -1)) {
-                body_lines.add(line);
+            for (String raw_line : safe_output.split("\n", -1)) {
+                for (String wrapped : soft_wrap(raw_line, DEFAULT_MAX_BODY_WIDTH)) {
+                    body_lines.add(wrapped);
+                }
             }
             // split with limit -1 preserves trailing empty strings; trim a single trailing empty
             // line if the content ended with a newline so we don't render a blank line at the end.
@@ -146,5 +152,34 @@ public final class ToolResultBox {
             sb.append(unit);
         }
         return sb.toString();
+    }
+
+    /**
+     * Break a single source line into chunks no wider than {@code max_width} visible characters.
+     * Preserves empty lines (one chunk of length 0) and works on the raw string — counts via the
+     * AnsiPalette visible-width helper so ANSI escapes don't inflate the count.
+     */
+    static List<String> soft_wrap(String line, int max_width) {
+        List<String> chunks = new ArrayList<>();
+        if (line == null) {
+            chunks.add("");
+            return chunks;
+        }
+        if (max_width <= 0 || visible_length(line) <= max_width) {
+            chunks.add(line);
+            return chunks;
+        }
+        int start = 0;
+        int len = line.length();
+        // Naive char-based split — adequate for ASCII / mostly-ASCII REPL output.
+        while (start < len) {
+            int end = Math.min(start + max_width, len);
+            chunks.add(line.substring(start, end));
+            start = end;
+        }
+        if (chunks.isEmpty()) {
+            chunks.add("");
+        }
+        return chunks;
     }
 }
