@@ -8,6 +8,8 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import org.jclaude.api.json.JclaudeMappers;
 import org.jclaude.api.providers.OpenAiCompatClient;
 import org.jclaude.api.types.BlockDelta;
@@ -208,7 +210,91 @@ public final class OpenAiRuntimeApiClient implements ApiClient {
         } else {
             out.add(AssistantEvent.MessageStop.INSTANCE);
         }
-        return out;
+        return rewrite_hermes_style_tool_calls(out);
+    }
+
+    // qwen3-coder + similar Hermes-template models emit tool calls as XML-shaped
+    // text inside the assistant message instead of OpenAI's structured `tool_calls`.
+    // Detect that pattern and rewrite the events into proper ToolUse events so the
+    // dispatcher can execute them.
+    private static final Pattern HERMES_FUNCTION_BLOCK =
+            Pattern.compile("<function=([\\w_.\\-]+)>(.*?)</function>", Pattern.DOTALL);
+    private static final Pattern HERMES_PARAMETER_BLOCK =
+            Pattern.compile("<parameter=([\\w_.\\-]+)>(.*?)</parameter>", Pattern.DOTALL);
+    private static final Pattern HERMES_TOOL_CALL_WRAPPER = Pattern.compile("</?tool_call>");
+
+    static List<AssistantEvent> rewrite_hermes_style_tool_calls(List<AssistantEvent> events) {
+        // Concatenate all leading TextDelta events to inspect for the pattern.
+        StringBuilder text_buffer = new StringBuilder();
+        int first_text_index = -1;
+        int last_text_index = -1;
+        for (int i = 0; i < events.size(); i++) {
+            AssistantEvent ev = events.get(i);
+            if (ev instanceof AssistantEvent.TextDelta td) {
+                if (first_text_index < 0) {
+                    first_text_index = i;
+                }
+                last_text_index = i;
+                text_buffer.append(td.text());
+            } else if (ev instanceof AssistantEvent.ToolUse) {
+                // Already have structured tool calls — don't double-process.
+                return events;
+            }
+        }
+        String text = text_buffer.toString();
+        if (!text.contains("<function=")) {
+            return events;
+        }
+        Matcher fn = HERMES_FUNCTION_BLOCK.matcher(text);
+        List<AssistantEvent.ToolUse> parsed_calls = new ArrayList<>();
+        StringBuilder cleaned = new StringBuilder();
+        int cursor = 0;
+        int call_index = 0;
+        while (fn.find()) {
+            cleaned.append(text, cursor, fn.start());
+            cursor = fn.end();
+            String name = fn.group(1);
+            String body = fn.group(2);
+            ObjectNode args = MAPPER.createObjectNode();
+            Matcher param = HERMES_PARAMETER_BLOCK.matcher(body);
+            while (param.find()) {
+                String key = param.group(1);
+                String value = param.group(2).trim();
+                args.put(key, value);
+            }
+            String input_json;
+            try {
+                input_json = MAPPER.writeValueAsString(args);
+            } catch (JsonProcessingException e) {
+                input_json = "{}";
+            }
+            String synthesized_id = "hermes_" + System.nanoTime() + "_" + (call_index++);
+            parsed_calls.add(new AssistantEvent.ToolUse(synthesized_id, name, input_json));
+        }
+        cleaned.append(text, cursor, text.length());
+        // Strip leftover <tool_call> / </tool_call> wrappers.
+        String cleaned_text = HERMES_TOOL_CALL_WRAPPER
+                .matcher(cleaned.toString())
+                .replaceAll("")
+                .trim();
+
+        // Rebuild the event list: drop the original TextDelta range, insert (a) one
+        // TextDelta for any non-empty cleaned text, then (b) all parsed tool uses,
+        // before whatever followed (Usage, MessageStop, etc).
+        List<AssistantEvent> rebuilt = new ArrayList<>(events.size() + parsed_calls.size());
+        for (int i = 0; i < events.size(); i++) {
+            if (i >= first_text_index && i <= last_text_index) {
+                if (i == first_text_index) {
+                    if (!cleaned_text.isEmpty()) {
+                        rebuilt.add(new AssistantEvent.TextDelta(cleaned_text));
+                    }
+                    rebuilt.addAll(parsed_calls);
+                }
+                continue;
+            }
+            rebuilt.add(events.get(i));
+        }
+        return rebuilt;
     }
 
     private static List<ToolDefinition> build_tool_definitions(List<ToolSpec> specs) {
