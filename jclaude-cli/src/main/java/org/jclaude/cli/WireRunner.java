@@ -309,7 +309,49 @@ public final class WireRunner {
                 .with_tool_requirement("StructuredOutput", PermissionMode.READ_ONLY)
                 .with_tool_requirement("EnterPlanMode", PermissionMode.READ_ONLY)
                 .with_tool_requirement("ExitPlanMode", PermissionMode.READ_ONLY)
-                .with_tool_requirement("SendUserMessage", PermissionMode.READ_ONLY);
+                .with_tool_requirement("SendUserMessage", PermissionMode.READ_ONLY)
+                // Network-read tools: HTTP GET / search / OAuth status. Read-only by default;
+                // RemoteTrigger (POST webhook) is workspace_write because it has side effects.
+                .with_tool_requirement("WebFetch", PermissionMode.READ_ONLY)
+                .with_tool_requirement("WebSearch", PermissionMode.READ_ONLY)
+                .with_tool_requirement("RemoteTrigger", PermissionMode.WORKSPACE_WRITE)
+                // MCP / LSP / NotebookEdit / Skill / Agent / Config / AskUserQuestion: read-only.
+                .with_tool_requirement("MCP", PermissionMode.READ_ONLY)
+                .with_tool_requirement("ListMcpResources", PermissionMode.READ_ONLY)
+                .with_tool_requirement("ReadMcpResource", PermissionMode.READ_ONLY)
+                .with_tool_requirement("McpAuth", PermissionMode.READ_ONLY)
+                .with_tool_requirement("LSP", PermissionMode.READ_ONLY)
+                .with_tool_requirement("NotebookEdit", PermissionMode.WORKSPACE_WRITE)
+                .with_tool_requirement("Skill", PermissionMode.READ_ONLY)
+                .with_tool_requirement("Agent", PermissionMode.READ_ONLY)
+                .with_tool_requirement("Config", PermissionMode.READ_ONLY)
+                .with_tool_requirement("AskUserQuestion", PermissionMode.READ_ONLY)
+                .with_tool_requirement("REPL", PermissionMode.DANGER_FULL_ACCESS)
+                .with_tool_requirement("PowerShell", PermissionMode.DANGER_FULL_ACCESS)
+                .with_tool_requirement("TestingPermission", PermissionMode.READ_ONLY)
+                // Task / Team / Cron registries: read-only state mutation against in-process state.
+                .with_tool_requirement("TaskCreate", PermissionMode.READ_ONLY)
+                .with_tool_requirement("TaskGet", PermissionMode.READ_ONLY)
+                .with_tool_requirement("TaskList", PermissionMode.READ_ONLY)
+                .with_tool_requirement("TaskStop", PermissionMode.READ_ONLY)
+                .with_tool_requirement("TaskUpdate", PermissionMode.READ_ONLY)
+                .with_tool_requirement("TaskOutput", PermissionMode.READ_ONLY)
+                .with_tool_requirement("RunTaskPacket", PermissionMode.READ_ONLY)
+                .with_tool_requirement("TeamCreate", PermissionMode.READ_ONLY)
+                .with_tool_requirement("TeamDelete", PermissionMode.READ_ONLY)
+                .with_tool_requirement("CronCreate", PermissionMode.READ_ONLY)
+                .with_tool_requirement("CronDelete", PermissionMode.READ_ONLY)
+                .with_tool_requirement("CronList", PermissionMode.READ_ONLY)
+                // Worker registry: spawning / signaling sub-agents touches process state.
+                .with_tool_requirement("WorkerCreate", PermissionMode.WORKSPACE_WRITE)
+                .with_tool_requirement("WorkerGet", PermissionMode.READ_ONLY)
+                .with_tool_requirement("WorkerObserve", PermissionMode.READ_ONLY)
+                .with_tool_requirement("WorkerObserveCompletion", PermissionMode.READ_ONLY)
+                .with_tool_requirement("WorkerResolveTrust", PermissionMode.READ_ONLY)
+                .with_tool_requirement("WorkerAwaitReady", PermissionMode.READ_ONLY)
+                .with_tool_requirement("WorkerSendPrompt", PermissionMode.WORKSPACE_WRITE)
+                .with_tool_requirement("WorkerRestart", PermissionMode.WORKSPACE_WRITE)
+                .with_tool_requirement("WorkerTerminate", PermissionMode.WORKSPACE_WRITE);
 
         // Plugin tools register their declared `requiredPermission` (defaults to read-only).
         for (PluginTool tool : plugins.tools()) {

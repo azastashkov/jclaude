@@ -591,17 +591,140 @@ public final class ToolDispatcher implements ToolExecutor {
 
     private ToolResult dispatch_web_search(JsonNode input) throws Exception {
         String query = required_string(input, "query", "WebSearch");
-        // Phase 3 stub: report a deterministic empty-result payload mirroring Rust's
-        // WebSearchOutput structure when no real search backend is wired in.
+        Optional<Integer> max_results = optional_int(input, "max_results");
+        int limit = max_results.orElse(10);
+
+        // Tests / offline runs may disable the network call via env var or system property.
+        if ("1".equals(System.getenv("JCLAUDE_WEBSEARCH_DISABLED"))
+                || "1".equals(System.getProperty("jclaude.websearch.disabled"))) {
+            return ToolResult.text(MAPPER.writeValueAsString(no_backend_payload(query)));
+        }
+
+        try {
+            return ToolResult.text(MAPPER.writeValueAsString(duckduckgo_search(query, limit)));
+        } catch (Exception network_failure) {
+            // Treat any transport / parse error as "no backend reachable" — surface a structured
+            // payload (rather than throwing) so the model can fall back gracefully.
+            ObjectNode fallback = no_backend_payload(query);
+            fallback.put(
+                    "error",
+                    network_failure.getMessage() == null ? network_failure.toString() : network_failure.getMessage());
+            return ToolResult.text(MAPPER.writeValueAsString(fallback));
+        }
+    }
+
+    private static ObjectNode no_backend_payload(String query) {
         ObjectNode payload = MAPPER.createObjectNode();
         payload.put("query", query);
         payload.put("duration_seconds", 0.0);
         payload.putArray("results");
         payload.put("status", "no_backend");
-        payload.put(
-                "message",
-                "WebSearch backend is not configured in Phase 3; returning empty results for query: " + query);
-        return ToolResult.text(MAPPER.writeValueAsString(payload));
+        payload.put("message", "WebSearch backend is not reachable; returning empty results for query: " + query);
+        return payload;
+    }
+
+    /**
+     * DuckDuckGo HTML backend. Mirrors the Rust source's behavior: GET the html.duckduckgo.com
+     * mirror, regex out result blocks, URL-decode the redirect target. Stays purely in JDK
+     * primitives — no Jsoup, no extra deps.
+     */
+    private static ObjectNode duckduckgo_search(String query, int limit) throws Exception {
+        long started = System.nanoTime();
+        java.net.URI uri = java.net.URI.create("https://html.duckduckgo.com/html/?q="
+                + java.net.URLEncoder.encode(query, java.nio.charset.StandardCharsets.UTF_8));
+        java.net.http.HttpClient client = java.net.http.HttpClient.newBuilder()
+                .followRedirects(java.net.http.HttpClient.Redirect.NORMAL)
+                .connectTimeout(java.time.Duration.ofSeconds(10))
+                .build();
+        java.net.http.HttpRequest request = java.net.http.HttpRequest.newBuilder(uri)
+                .timeout(java.time.Duration.ofSeconds(15))
+                .header(
+                        "User-Agent",
+                        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) jclaude/0.1")
+                .header("Accept", "text/html,application/xhtml+xml")
+                .header("Accept-Language", "en-US,en;q=0.9")
+                .GET()
+                .build();
+        java.net.http.HttpResponse<String> response =
+                client.send(request, java.net.http.HttpResponse.BodyHandlers.ofString());
+        String body = response.body();
+
+        // Anchor of every result row: <a ... class="result__a" href="<redirect>">title</a>.
+        // Snippet usually follows in <a class="result__snippet"> or a div with that class.
+        java.util.regex.Pattern anchor = java.util.regex.Pattern.compile(
+                "<a[^>]*class=\"[^\"]*result__a[^\"]*\"[^>]*href=\"([^\"]+)\"[^>]*>(.*?)</a>",
+                java.util.regex.Pattern.DOTALL);
+        java.util.regex.Pattern snippet = java.util.regex.Pattern.compile(
+                "<a[^>]*class=\"[^\"]*result__snippet[^\"]*\"[^>]*>(.*?)</a>", java.util.regex.Pattern.DOTALL);
+
+        java.util.regex.Matcher anchor_match = anchor.matcher(body);
+        java.util.regex.Matcher snippet_match = snippet.matcher(body);
+
+        com.fasterxml.jackson.databind.node.ArrayNode results = MAPPER.createArrayNode();
+        int collected = 0;
+        while (collected < limit && anchor_match.find()) {
+            String href = decode_ddg_redirect(anchor_match.group(1));
+            String title = strip_html(anchor_match.group(2));
+            String snip = "";
+            if (snippet_match.find(anchor_match.end())) {
+                snip = strip_html(snippet_match.group(1));
+            }
+            ObjectNode row = MAPPER.createObjectNode();
+            row.put("title", title);
+            row.put("url", href);
+            row.put("snippet", snip);
+            results.add(row);
+            collected++;
+        }
+
+        double seconds = (System.nanoTime() - started) / 1_000_000_000.0;
+        ObjectNode payload = MAPPER.createObjectNode();
+        payload.put("query", query);
+        payload.put("duration_seconds", Math.round(seconds * 1000.0) / 1000.0);
+        payload.set("results", results);
+        payload.put("status", results.size() > 0 ? "ok" : "no_results");
+        if (results.size() == 0) {
+            payload.put("message", "DuckDuckGo returned no parseable results for query: " + query);
+        }
+        return payload;
+    }
+
+    /** DDG wraps real URLs in `/l/?uddg=<encoded>&...`. Unwrap when present. */
+    private static String decode_ddg_redirect(String href) {
+        if (href == null || href.isEmpty()) {
+            return href;
+        }
+        // DDG sometimes returns //duckduckgo.com/l/?... — normalize to absolute.
+        String normalized = href.startsWith("//") ? "https:" + href : href;
+        int q = normalized.indexOf("uddg=");
+        if (q < 0) {
+            return normalized;
+        }
+        int amp = normalized.indexOf('&', q);
+        String encoded = amp < 0 ? normalized.substring(q + 5) : normalized.substring(q + 5, amp);
+        try {
+            return java.net.URLDecoder.decode(encoded, java.nio.charset.StandardCharsets.UTF_8);
+        } catch (Exception ignored) {
+            return normalized;
+        }
+    }
+
+    /**
+     * Strip HTML tags + decode the handful of entities DDG emits in result text. Keeps the
+     * impl regex-only so we don't pull a parser dep just for snippet cleanup.
+     */
+    private static String strip_html(String html) {
+        if (html == null) {
+            return "";
+        }
+        String text = html.replaceAll("<[^>]+>", "");
+        text = text.replace("&amp;", "&")
+                .replace("&lt;", "<")
+                .replace("&gt;", ">")
+                .replace("&quot;", "\"")
+                .replace("&#39;", "'")
+                .replace("&nbsp;", " ");
+        return text.trim();
     }
 
     private ToolResult dispatch_skill(JsonNode input) throws Exception {

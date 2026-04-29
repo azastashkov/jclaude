@@ -404,13 +404,19 @@ class ToolDispatcherPhase3Test {
         ToolDispatcher dispatcher = dispatcher_for(workspace);
         ObjectNode input = MAPPER.createObjectNode();
         input.put("query", "java records");
+        // Force the offline-stub branch so the test stays deterministic even when DuckDuckGo is
+        // reachable. Live DDG is exercised via integration / live REPL.
+        System.setProperty("jclaude.websearch.disabled", "1");
+        try {
+            ToolResult result = dispatcher.execute("WebSearch", input);
 
-        ToolResult result = dispatcher.execute("WebSearch", input);
-
-        assertThat(result.is_error()).isFalse();
-        JsonNode payload = MAPPER.readTree(result.output());
-        assertThat(payload.get("status").asText()).isEqualTo("no_backend");
-        assertThat(payload.get("results").isArray()).isTrue();
+            assertThat(result.is_error()).isFalse();
+            JsonNode payload = MAPPER.readTree(result.output());
+            assertThat(payload.get("status").asText()).isEqualTo("no_backend");
+            assertThat(payload.get("results").isArray()).isTrue();
+        } finally {
+            System.clearProperty("jclaude.websearch.disabled");
+        }
     }
 
     @Test
