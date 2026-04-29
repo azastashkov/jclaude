@@ -600,17 +600,124 @@ public final class ToolDispatcher implements ToolExecutor {
             return ToolResult.text(MAPPER.writeValueAsString(no_backend_payload(query)));
         }
 
-        try {
-            return ToolResult.text(MAPPER.writeValueAsString(duckduckgo_search(query, limit)));
-        } catch (Exception network_failure) {
-            // Treat any transport / parse error as "no backend reachable" — surface a structured
-            // payload (rather than throwing) so the model can fall back gracefully.
-            ObjectNode fallback = no_backend_payload(query);
-            fallback.put(
-                    "error",
-                    network_failure.getMessage() == null ? network_failure.toString() : network_failure.getMessage());
-            return ToolResult.text(MAPPER.writeValueAsString(fallback));
+        // Backend chain: Google Custom Search (if GOOGLE_API_KEY+GOOGLE_CSE_ID configured) →
+        // DuckDuckGo HTML scrape → graceful no_backend payload. We try each in order and return
+        // the first that yields populated results; if every backend yields zero rows or errors,
+        // we surface a no_backend response so the model can ask the user how to configure search.
+        java.util.List<String> attempts = new java.util.ArrayList<>();
+        Exception last_error = null;
+        if (google_credentials_configured()) {
+            try {
+                ObjectNode google = google_search(query, limit);
+                if ("ok".equals(google.path("status").asText())) {
+                    return ToolResult.text(MAPPER.writeValueAsString(google));
+                }
+                attempts.add("google:" + google.path("status").asText("?"));
+            } catch (Exception e) {
+                last_error = e;
+                attempts.add("google:error");
+            }
+        } else {
+            attempts.add("google:no_credentials");
         }
+
+        try {
+            ObjectNode ddg = duckduckgo_search(query, limit);
+            if ("ok".equals(ddg.path("status").asText())) {
+                return ToolResult.text(MAPPER.writeValueAsString(ddg));
+            }
+            attempts.add("duckduckgo:" + ddg.path("status").asText("?"));
+        } catch (Exception e) {
+            last_error = e;
+            attempts.add("duckduckgo:error");
+        }
+
+        // All backends drained; emit a structured no_backend with the attempt log so the model
+        // can see exactly which backends were tried and why.
+        ObjectNode fallback = no_backend_payload(query);
+        fallback.put(
+                "message",
+                "WebSearch backends exhausted (" + String.join(", ", attempts)
+                        + "). Set GOOGLE_API_KEY+GOOGLE_CSE_ID to enable Google Custom Search.");
+        if (last_error != null) {
+            fallback.put("error", last_error.getMessage() == null ? last_error.toString() : last_error.getMessage());
+        }
+        return ToolResult.text(MAPPER.writeValueAsString(fallback));
+    }
+
+    private static boolean google_credentials_configured() {
+        return first_non_empty(System.getenv("GOOGLE_API_KEY"), System.getProperty("jclaude.google.api_key")) != null
+                && first_non_empty(System.getenv("GOOGLE_CSE_ID"), System.getProperty("jclaude.google.cse_id")) != null;
+    }
+
+    /**
+     * Google Custom Search JSON API backend. Requires {@code GOOGLE_API_KEY} (or
+     * {@code -Djclaude.google.api_key=...}) and {@code GOOGLE_CSE_ID} (or
+     * {@code -Djclaude.google.cse_id=...}). Free quota is 100 queries/day per API key. CSE setup:
+     * <a href="https://programmablesearchengine.google.com/">programmablesearchengine.google.com</a>;
+     * key: <a href="https://developers.google.com/custom-search/v1/introduction">developers.google.com/custom-search</a>.
+     */
+    private static ObjectNode google_search(String query, int limit) throws Exception {
+        String api_key = first_non_empty(System.getenv("GOOGLE_API_KEY"), System.getProperty("jclaude.google.api_key"));
+        String cse_id = first_non_empty(System.getenv("GOOGLE_CSE_ID"), System.getProperty("jclaude.google.cse_id"));
+        long started = System.nanoTime();
+        int num = Math.max(1, Math.min(limit, 10)); // CSE caps `num` at 10 per request.
+        java.net.URI uri = java.net.URI.create("https://www.googleapis.com/customsearch/v1?q="
+                + java.net.URLEncoder.encode(query, java.nio.charset.StandardCharsets.UTF_8)
+                + "&key=" + java.net.URLEncoder.encode(api_key, java.nio.charset.StandardCharsets.UTF_8)
+                + "&cx=" + java.net.URLEncoder.encode(cse_id, java.nio.charset.StandardCharsets.UTF_8)
+                + "&num=" + num);
+        java.net.http.HttpClient client = java.net.http.HttpClient.newBuilder()
+                .followRedirects(java.net.http.HttpClient.Redirect.NORMAL)
+                .connectTimeout(java.time.Duration.ofSeconds(10))
+                .build();
+        java.net.http.HttpRequest request = java.net.http.HttpRequest.newBuilder(uri)
+                .timeout(java.time.Duration.ofSeconds(15))
+                .header("User-Agent", "jclaude/0.1")
+                .header("Accept", "application/json")
+                .GET()
+                .build();
+        java.net.http.HttpResponse<String> response =
+                client.send(request, java.net.http.HttpResponse.BodyHandlers.ofString());
+
+        JsonNode body = MAPPER.readTree(response.body());
+        com.fasterxml.jackson.databind.node.ArrayNode results = MAPPER.createArrayNode();
+        JsonNode items = body.path("items");
+        if (items.isArray()) {
+            for (JsonNode item : items) {
+                ObjectNode row = MAPPER.createObjectNode();
+                row.put("title", item.path("title").asText(""));
+                row.put("url", item.path("link").asText(""));
+                row.put("snippet", item.path("snippet").asText(""));
+                results.add(row);
+            }
+        }
+        double seconds = (System.nanoTime() - started) / 1_000_000_000.0;
+        ObjectNode payload = MAPPER.createObjectNode();
+        payload.put("query", query);
+        payload.put("duration_seconds", Math.round(seconds * 1000.0) / 1000.0);
+        payload.set("results", results);
+        if (body.has("error")) {
+            payload.put("status", "error");
+            payload.put(
+                    "message",
+                    "Google Custom Search returned an error: "
+                            + body.path("error").path("message").asText("unknown"));
+        } else if (results.size() == 0) {
+            payload.put("status", "no_results");
+        } else {
+            payload.put("status", "ok");
+        }
+        return payload;
+    }
+
+    private static String first_non_empty(String... candidates) {
+        for (String c : candidates) {
+            if (c != null && !c.isBlank()) {
+                return c.trim();
+            }
+        }
+        return null;
     }
 
     private static ObjectNode no_backend_payload(String query) {
