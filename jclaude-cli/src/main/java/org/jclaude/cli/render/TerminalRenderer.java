@@ -70,35 +70,33 @@ public final class TerminalRenderer {
                 }
             }
         }
-        if (assistant.length() > 0) {
-            String rendered = markdown.render(assistant.toString());
-            if (!rendered.isEmpty()) {
-                out.println(rendered);
-            }
-        }
+        String assistant_rendered = assistant.length() > 0 ? markdown.render(assistant.toString()) : "";
 
-        if (compact) {
-            out.flush();
-            return;
-        }
-
-        // Tool uses → tool results: emit each result inside a box.
-        for (ConversationMessage message : summary.tool_results()) {
-            if (message.role() != MessageRole.TOOL) {
-                continue;
-            }
-            for (ContentBlock block : message.blocks()) {
-                if (block instanceof ContentBlock.ToolResult result) {
-                    String pretty = ToolResultPrettyPrinter.format(result.tool_name(), result.output());
-                    String trimmed = truncate_for_display(pretty, MAX_DISPLAY_LINES);
-                    out.println(box.render(result.tool_name(), trimmed, result.is_error()));
+        // Layout order: tool boxes first (the audit trail), then the dim turn footer, then the
+        // synthesized prose. Putting the prose last means the next REPL prompt sits right under
+        // the model's final answer instead of below a wall of tool boxes — the user can read the
+        // answer without scrolling past every read_file/glob_search result.
+        if (!compact) {
+            for (ConversationMessage message : summary.tool_results()) {
+                if (message.role() != MessageRole.TOOL) {
+                    continue;
+                }
+                for (ContentBlock block : message.blocks()) {
+                    if (block instanceof ContentBlock.ToolResult result) {
+                        String pretty = ToolResultPrettyPrinter.format(result.tool_name(), result.output());
+                        String trimmed = truncate_for_display(pretty, MAX_DISPLAY_LINES);
+                        out.println(box.render(result.tool_name(), trimmed, result.is_error()));
+                    }
                 }
             }
+            out.println(palette.dim("[turn] iterations=" + summary.iterations()
+                    + " input_tokens=" + summary.usage().input_tokens()
+                    + " output_tokens=" + summary.usage().output_tokens()));
         }
 
-        out.println(palette.dim("[turn] iterations=" + summary.iterations()
-                + " input_tokens=" + summary.usage().input_tokens()
-                + " output_tokens=" + summary.usage().output_tokens()));
+        if (!assistant_rendered.isEmpty()) {
+            out.println(assistant_rendered);
+        }
         out.flush();
     }
 
