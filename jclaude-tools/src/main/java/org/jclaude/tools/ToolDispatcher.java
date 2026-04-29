@@ -353,8 +353,62 @@ public final class ToolDispatcher implements ToolExecutor {
         String path = required_string(input, "path", "read_file");
         Optional<Integer> offset = optional_int(input, "offset");
         Optional<Integer> limit = optional_int(input, "limit");
-        ReadFile.Output output = ReadFile.execute(new ReadFile.Input(path, offset, limit, workspace_root));
-        return ToolResult.text(MAPPER.writeValueAsString(output));
+        try {
+            ReadFile.Output output = ReadFile.execute(new ReadFile.Input(path, offset, limit, workspace_root));
+            return ToolResult.text(MAPPER.writeValueAsString(output));
+        } catch (org.jclaude.runtime.files.FileOpsException e) {
+            // Auto-resolve bare filenames (no '/') by globbing the workspace. Lets the model say
+            // "read_file ToolExecutor.java" without needing to glob_search first. Strict path
+            // semantics are preserved when the input has any directory component.
+            if (e.kind() == org.jclaude.runtime.files.FileOpsException.Kind.NOT_FOUND && !path.contains("/")) {
+                java.util.List<String> candidates = workspace_glob_for_basename(path);
+                if (candidates.size() == 1) {
+                    // Pass the absolute glob result straight through. ReadFile + PathUtils accept
+                    // absolute paths and validate the workspace boundary on canonicalized form;
+                    // doing our own relativize first trips on macOS /var → /private/var symlinks.
+                    ReadFile.Output output =
+                            ReadFile.execute(new ReadFile.Input(candidates.get(0), offset, limit, workspace_root));
+                    return ToolResult.text(MAPPER.writeValueAsString(output));
+                }
+                if (!candidates.isEmpty()) {
+                    com.fasterxml.jackson.databind.node.ObjectNode err = MAPPER.createObjectNode();
+                    err.put("error", "ambiguous filename: " + path);
+                    com.fasterxml.jackson.databind.node.ArrayNode arr = err.putArray("candidates");
+                    for (String c : candidates) {
+                        arr.add(relativize(c));
+                    }
+                    return ToolResult.error(MAPPER.writeValueAsString(err));
+                }
+            }
+            throw e;
+        }
+    }
+
+    /** Glob the workspace for a bare basename. Returns absolute path strings. */
+    private java.util.List<String> workspace_glob_for_basename(String basename) {
+        try {
+            org.jclaude.runtime.files.GlobSearch.Output out =
+                    org.jclaude.runtime.files.GlobSearch.execute(new org.jclaude.runtime.files.GlobSearch.Input(
+                            "**/" + basename, java.util.Optional.empty(), workspace_root));
+            return out.filenames();
+        } catch (Exception ignored) {
+            return java.util.List.of();
+        }
+    }
+
+    /**
+     * Workspace-relative path used in the ambiguous-candidate display list. Canonicalizes both
+     * ends so macOS /var → /private/var symlinks don't yield climb-out paths; falls back to the
+     * absolute string if canonicalization fails.
+     */
+    private String relativize(String absolute) {
+        try {
+            java.nio.file.Path real_root = workspace_root.toRealPath();
+            java.nio.file.Path real_target = java.nio.file.Paths.get(absolute).toRealPath();
+            return real_root.relativize(real_target).toString();
+        } catch (Exception ignored) {
+            return absolute;
+        }
     }
 
     private ToolResult dispatch_write_file(JsonNode input) throws Exception {

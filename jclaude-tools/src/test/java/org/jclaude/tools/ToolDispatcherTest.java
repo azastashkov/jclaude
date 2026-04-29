@@ -46,6 +46,67 @@ class ToolDispatcherTest {
     }
 
     @Test
+    void read_file_auto_resolves_bare_filename_to_unique_workspace_match(@TempDir Path workspace) throws IOException {
+        Files.createDirectories(workspace.resolve("a/b/c"));
+        Files.writeString(workspace.resolve("a/b/c/Foo.java"), "class Foo {}");
+
+        ObjectNode input = MAPPER.createObjectNode();
+        input.put("path", "Foo.java");
+
+        ToolResult result = dispatcher_for(workspace).execute("read_file", input);
+
+        assertThat(result.is_error()).isFalse();
+        JsonNode payload = MAPPER.readTree(result.output());
+        assertThat(payload.get("file").get("content").asText()).isEqualTo("class Foo {}");
+        assertThat(payload.get("file").get("file_path").asText()).endsWith("a/b/c/Foo.java");
+    }
+
+    @Test
+    void read_file_returns_ambiguous_error_with_candidates_when_multiple_matches(@TempDir Path workspace)
+            throws IOException {
+        Files.createDirectories(workspace.resolve("x"));
+        Files.createDirectories(workspace.resolve("y"));
+        Files.writeString(workspace.resolve("x/Bar.java"), "class Bar {}");
+        Files.writeString(workspace.resolve("y/Bar.java"), "class Bar2 {}");
+
+        ObjectNode input = MAPPER.createObjectNode();
+        input.put("path", "Bar.java");
+
+        ToolResult result = dispatcher_for(workspace).execute("read_file", input);
+
+        assertThat(result.is_error()).isTrue();
+        JsonNode payload = MAPPER.readTree(result.output());
+        assertThat(payload.get("error").asText()).contains("ambiguous filename: Bar.java");
+        ArrayNode candidates = (ArrayNode) payload.get("candidates");
+        assertThat(candidates).hasSize(2);
+    }
+
+    @Test
+    void read_file_does_not_auto_resolve_when_path_has_directory_component(@TempDir Path workspace) throws IOException {
+        Files.createDirectories(workspace.resolve("a/b"));
+        Files.writeString(workspace.resolve("a/b/Foo.java"), "class Foo {}");
+
+        ObjectNode input = MAPPER.createObjectNode();
+        input.put("path", "missing/Foo.java"); // any '/' disables the auto-resolve
+
+        ToolResult result = dispatcher_for(workspace).execute("read_file", input);
+
+        assertThat(result.is_error()).isTrue();
+        assertThat(result.output().toLowerCase()).contains("no such file or directory");
+    }
+
+    @Test
+    void read_file_returns_original_not_found_when_no_workspace_match(@TempDir Path workspace) throws IOException {
+        ObjectNode input = MAPPER.createObjectNode();
+        input.put("path", "Nothing.java");
+
+        ToolResult result = dispatcher_for(workspace).execute("read_file", input);
+
+        assertThat(result.is_error()).isTrue();
+        assertThat(result.output().toLowerCase()).contains("no such file or directory");
+    }
+
+    @Test
     void write_file_dispatches_to_runtime_files_write_file(@TempDir Path workspace) throws IOException {
         ObjectNode input = MAPPER.createObjectNode();
         input.put("path", "out.txt");
