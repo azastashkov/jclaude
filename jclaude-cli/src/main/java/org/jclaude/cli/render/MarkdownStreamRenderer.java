@@ -516,13 +516,13 @@ public final class MarkdownStreamRenderer {
 
         @Override
         public void visit(FencedCodeBlock fenced) {
-            String lang = fenced.getInfo() == null || fenced.getInfo().isBlank()
-                    ? "code"
-                    : fenced.getInfo().trim();
-            out.append(palette.code_border("╭─ " + lang)).append('\n');
+            String info = fenced.getInfo();
+            String lang_label = info == null || info.isBlank() ? "code" : info.trim();
             String body = fenced.getLiteral() == null ? "" : fenced.getLiteral();
-            out.append(body);
-            if (!body.endsWith("\n")) {
+            String highlighted = SyntaxHighlighter.highlight(body, lang_label, palette);
+            out.append(palette.code_border("╭─ " + lang_label)).append('\n');
+            out.append(highlighted);
+            if (!highlighted.endsWith("\n")) {
                 out.append('\n');
             }
             out.append(palette.code_border("╰─")).append("\n\n");
@@ -530,8 +530,8 @@ public final class MarkdownStreamRenderer {
 
         @Override
         public void visit(IndentedCodeBlock block) {
-            out.append(palette.code_border("╭─ code")).append('\n');
             String body = block.getLiteral() == null ? "" : block.getLiteral();
+            out.append(palette.code_border("╭─ code")).append('\n');
             out.append(body);
             if (!body.endsWith("\n")) {
                 out.append('\n');

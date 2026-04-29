@@ -164,6 +164,31 @@ public final class AnsiPalette {
         return paint(DIM + GREY, text);
     }
 
+    /** Syntax-highlight: comment (dim grey). */
+    public String code_comment(String text) {
+        return paint(DIM + GREY, text);
+    }
+
+    /** Syntax-highlight: string literal (green). */
+    public String code_string(String text) {
+        return paint(GREEN, text);
+    }
+
+    /** Syntax-highlight: number literal (magenta). */
+    public String code_number(String text) {
+        return paint(MAGENTA, text);
+    }
+
+    /** Syntax-highlight: language keyword (cyan). */
+    public String code_keyword(String text) {
+        return paint(CYAN, text);
+    }
+
+    /** Syntax-highlight: type or built-in name (yellow). */
+    public String code_type(String text) {
+        return paint(YELLOW, text);
+    }
+
     /** Table border — dim cyan per the Rust theme. */
     public String table_border(String text) {
         return paint(DIM + CYAN, text);
