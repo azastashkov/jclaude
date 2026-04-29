@@ -25,6 +25,7 @@ import org.jclaude.cli.input.AllowAllPermissionPrompter;
 import org.jclaude.cli.input.YesNoPermissionPrompter;
 import org.jclaude.cli.render.JsonOutputRenderer;
 import org.jclaude.cli.render.TextOutputRenderer;
+import org.jclaude.cli.repl.Repl;
 import org.jclaude.plugins.PluginRegistry;
 import org.jclaude.plugins.PluginTool;
 import org.jclaude.runtime.conversation.ApiClient;
@@ -75,7 +76,55 @@ public final class WireRunner {
             System.err.println("error: missing prompt — pass `-p \"...\"` or a positional argument");
             return 2;
         }
+        Pipeline built = build_pipeline();
+        if (built.error_code() != 0) {
+            return built.error_code();
+        }
+        TurnSummary summary;
+        try {
+            summary = built.runtime().run_turn(prompt, built.prompter());
+        } catch (RuntimeException error) {
+            System.err.println("error: " + (error.getMessage() == null ? error.toString() : error.getMessage()));
+            return 1;
+        }
+        if (command.output_format() == OutputFormat.JSON) {
+            new JsonOutputRenderer().render(summary, built.resolved_model());
+        } else {
+            new TextOutputRenderer().render(summary, command.compact());
+        }
+        return 0;
+    }
 
+    /** Run the interactive REPL using the same pipeline as one-shot mode. */
+    public int repl() {
+        Pipeline built = build_pipeline();
+        if (built.error_code() != 0) {
+            return built.error_code();
+        }
+        try {
+            Repl repl = Repl.build(built.runtime(), built.prompter());
+            return repl.run();
+        } catch (java.io.IOException error) {
+            System.err.println("error: failed to open terminal — " + error.getMessage());
+            return 1;
+        }
+    }
+
+    /** Holds the assembled runtime pipeline plus the resolved model used by renderers. */
+    public record Pipeline(
+            ConversationRuntime runtime, PermissionPrompter prompter, String resolved_model, int error_code) {
+
+        static Pipeline failed(int code) {
+            return new Pipeline(null, null, null, code);
+        }
+    }
+
+    /**
+     * Build the full pipeline (api client, dispatcher, runtime, session, prompter) from the parsed
+     * {@link JclaudeCommand}. Used by both {@link #run(String)} (one-shot mode) and
+     * {@link #repl()} (interactive mode).
+     */
+    private Pipeline build_pipeline() {
         String resolved_model = Providers.resolve_model_alias(command.model());
         ProviderMetadata metadata =
                 Providers.metadata_for_model(resolved_model).orElseGet(() -> fallback_metadata(resolved_model));
@@ -89,7 +138,7 @@ public final class WireRunner {
         if (metadata.provider() == ProviderKind.ANTHROPIC) {
             AnthropicClient anthropic_client = build_anthropic_client();
             if (anthropic_client == null) {
-                return 2;
+                return Pipeline.failed(2);
             }
             api_adapter = new AnthropicRuntimeApiClient(anthropic_client, resolved_model, max_tokens, tool_specs);
         } else {
@@ -97,7 +146,7 @@ public final class WireRunner {
             Optional<String> api_key = Providers.read_env_non_empty(metadata.auth_env());
             if (api_key.isEmpty()) {
                 System.err.println("error: missing API key in env var " + metadata.auth_env());
-                return 2;
+                return Pipeline.failed(2);
             }
             OpenAiCompatClient client = new OpenAiCompatClient(api_key.get(), config);
             api_adapter = new OpenAiRuntimeApiClient(client, resolved_model, max_tokens, tool_specs);
@@ -139,20 +188,7 @@ public final class WireRunner {
         session.set_model(resolved_model);
 
         ConversationRuntime runtime = new ConversationRuntime(session, api_adapter, tool_executor, policy, List.of());
-        TurnSummary summary;
-        try {
-            summary = runtime.run_turn(prompt, prompter);
-        } catch (RuntimeException error) {
-            System.err.println("error: " + (error.getMessage() == null ? error.toString() : error.getMessage()));
-            return 1;
-        }
-
-        if (command.output_format() == OutputFormat.JSON) {
-            new JsonOutputRenderer().render(summary, resolved_model);
-        } else {
-            new TextOutputRenderer().render(summary, command.compact());
-        }
-        return 0;
+        return new Pipeline(runtime, prompter, resolved_model, 0);
     }
 
     /**

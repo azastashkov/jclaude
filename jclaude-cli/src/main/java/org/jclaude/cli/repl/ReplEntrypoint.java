@@ -72,22 +72,19 @@ public final class ReplEntrypoint {
     }
 
     /** Run the REPL. Returns the process exit code. */
+    /**
+     * Run the REPL. Parses {@code args} into a {@link org.jclaude.cli.JclaudeCommand} via Picocli,
+     * builds the same runtime pipeline used by one-shot mode, and drives the
+     * {@link org.jclaude.cli.repl.Repl} loop.
+     */
     public static int run(String[] args) {
-        // Currently, the REPL surface is wired up but invocation requires the runtime/session
-        // bootstrap that lives in WireRunner. To preserve the one-shot test suite behaviour and
-        // avoid touching JclaudeCommand, the MVP REPL prints a placeholder banner and returns 0.
-        // A follow-up commit can connect ConversationRuntime + Repl once subcommand-handlers
-        // settles their JclaudeCommand changes.
-        System.out.println("jclaude REPL — use `jclaude -p \"...\"` for one-shot mode (REPL stub).");
-        System.out.println("Hit Ctrl+D to exit.");
+        org.jclaude.cli.JclaudeCommand command = new org.jclaude.cli.JclaudeCommand();
         try {
-            int b = System.in.read();
-            while (b != -1) {
-                b = System.in.read();
-            }
-        } catch (java.io.IOException ignored) {
-            // ignore — exit cleanly
+            new picocli.CommandLine(command).parseArgs(args == null ? new String[0] : args);
+        } catch (picocli.CommandLine.ParameterException error) {
+            System.err.println("error: " + error.getMessage());
+            return 2;
         }
-        return 0;
+        return new org.jclaude.cli.WireRunner(command).repl();
     }
 }
