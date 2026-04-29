@@ -156,8 +156,9 @@ public final class ToolResultBox {
 
     /**
      * Break a single source line into chunks no wider than {@code max_width} visible characters.
-     * Preserves empty lines (one chunk of length 0) and works on the raw string — counts via the
-     * AnsiPalette visible-width helper so ANSI escapes don't inflate the count.
+     * Prefers a space boundary inside the window — falls back to a hard char-cut when the chunk
+     * has no space (e.g. a long URL or an unbroken hash). Preserves empty lines as a single empty
+     * chunk.
      */
     static List<String> soft_wrap(String line, int max_width) {
         List<String> chunks = new ArrayList<>();
@@ -171,11 +172,26 @@ public final class ToolResultBox {
         }
         int start = 0;
         int len = line.length();
-        // Naive char-based split — adequate for ASCII / mostly-ASCII REPL output.
         while (start < len) {
-            int end = Math.min(start + max_width, len);
+            int hard_end = Math.min(start + max_width, len);
+            if (hard_end >= len) {
+                chunks.add(line.substring(start));
+                break;
+            }
+            // Prefer to break at the last space within [start, hard_end]. If no space exists,
+            // hard-cut at the column boundary so we never produce a chunk wider than max_width.
+            int space_break = line.lastIndexOf(' ', hard_end);
+            int end;
+            int next_start;
+            if (space_break > start) {
+                end = space_break;
+                next_start = space_break + 1; // consume the space
+            } else {
+                end = hard_end;
+                next_start = hard_end;
+            }
             chunks.add(line.substring(start, end));
-            start = end;
+            start = next_start;
         }
         if (chunks.isEmpty()) {
             chunks.add("");

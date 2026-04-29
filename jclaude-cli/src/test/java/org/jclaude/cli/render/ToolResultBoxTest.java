@@ -101,4 +101,30 @@ final class ToolResultBoxTest {
         assertThat(rendered).contains("╭");
         assertThat(rendered).contains("╯");
     }
+
+    @Test
+    void soft_wrap_breaks_on_word_boundary_within_window() {
+        // "the quick brown fox jumps" with width 10 prefers the last space ≤ 10.
+        java.util.List<String> chunks = ToolResultBox.soft_wrap("the quick brown fox jumps", 10);
+
+        assertThat(chunks).containsExactly("the quick", "brown fox", "jumps");
+    }
+
+    @Test
+    void soft_wrap_falls_back_to_hard_cut_when_no_space_inside_window() {
+        // Long unbroken token (URL-like) longer than the window — no boundary to find.
+        java.util.List<String> chunks = ToolResultBox.soft_wrap("aaaaaaaaaaaaaaaaaaaa", 8);
+
+        // Each chunk is at most 8 chars wide.
+        for (String chunk : chunks) {
+            assertThat(chunk.length()).isLessThanOrEqualTo(8);
+        }
+        assertThat(String.join("", chunks)).isEqualTo("aaaaaaaaaaaaaaaaaaaa");
+    }
+
+    @Test
+    void soft_wrap_passes_short_lines_through_unchanged() {
+        java.util.List<String> chunks = ToolResultBox.soft_wrap("hello world", 100);
+        assertThat(chunks).containsExactly("hello world");
+    }
 }

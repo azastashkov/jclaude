@@ -17,6 +17,14 @@ import org.jclaude.runtime.session.MessageRole;
  */
 public final class TerminalRenderer {
 
+    /**
+     * Maximum number of lines a single tool result is allowed to occupy in the REPL display. The
+     * model still sees the full content (the runtime forwards the untruncated JSON envelope on the
+     * next turn); this cap exists purely so a `read_file` of a 5000-line source doesn't bury the
+     * prompt off-screen.
+     */
+    static final int MAX_DISPLAY_LINES = 40;
+
     private final PrintStream out;
     private final AnsiPalette palette;
     private final MarkdownStreamRenderer markdown;
@@ -82,7 +90,8 @@ public final class TerminalRenderer {
             for (ContentBlock block : message.blocks()) {
                 if (block instanceof ContentBlock.ToolResult result) {
                     String pretty = ToolResultPrettyPrinter.format(result.tool_name(), result.output());
-                    out.println(box.render(result.tool_name(), pretty, result.is_error()));
+                    String trimmed = truncate_for_display(pretty, MAX_DISPLAY_LINES);
+                    out.println(box.render(result.tool_name(), trimmed, result.is_error()));
                 }
             }
         }
@@ -91,5 +100,29 @@ public final class TerminalRenderer {
                 + " input_tokens=" + summary.usage().input_tokens()
                 + " output_tokens=" + summary.usage().output_tokens()));
         out.flush();
+    }
+
+    /**
+     * Cap a multi-line text to {@code max_lines} for in-REPL display, appending a footer like
+     * {@code … (N more lines)} when truncated. Operates on logical newlines; the caller
+     * (typically a soft-wrapping renderer) is free to re-flow each kept line.
+     */
+    static String truncate_for_display(String text, int max_lines) {
+        if (text == null || max_lines <= 0) {
+            return text;
+        }
+        String[] lines = text.split("\n", -1);
+        if (lines.length <= max_lines) {
+            return text;
+        }
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < max_lines; i++) {
+            if (i > 0) {
+                sb.append('\n');
+            }
+            sb.append(lines[i]);
+        }
+        sb.append('\n').append("… (").append(lines.length - max_lines).append(" more lines)");
+        return sb.toString();
     }
 }
