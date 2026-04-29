@@ -337,7 +337,12 @@ public final class ToolDispatcher implements ToolExecutor {
         } catch (UnsupportedToolException e) {
             throw e;
         } catch (Exception e) {
-            LOG.log(Level.WARNING, "tool '" + tool_name + "' raised an exception", e);
+            // Every exception path here is already surfaced to the model as ToolResult.error and
+            // rendered to the user in the REPL box. Logging at WARNING duplicates the failure to
+            // stderr with a full stacktrace, polluting the REPL between turns. Drop the level to
+            // FINE so debug builds (e.g. -Djava.util.logging.ConsoleHandler.level=FINE) can still
+            // see the cause when investigating tool bugs.
+            LOG.log(Level.FINE, "tool '" + tool_name + "' raised an exception", e);
             return ToolResult.error(e.getMessage() != null ? e.getMessage() : e.toString());
         }
     }
