@@ -1,0 +1,150 @@
+package org.jclaude.cli.render;
+
+import java.util.ArrayList;
+import java.util.List;
+
+/**
+ * Renders a tool result inside box-drawing borders. Mirrors the Rust pretty-print output:
+ *
+ * <pre>
+ * ╭─ read_file ─╮
+ * │ ✓ alpha     │
+ * │   beta      │
+ * ╰─────────────╯
+ * </pre>
+ *
+ * <p>Borders are colored green for successful results and red for tool errors. The header carries
+ * the tool name; an optional status icon ({@code ✓} or {@code ✗}) precedes the first body line.
+ *
+ * <p>This class is stateless — call {@link #render(String, String, boolean)} or
+ * {@link #render(String, String, boolean, AnsiPalette)} per result.
+ */
+public final class ToolResultBox {
+
+    private static final String CORNER_TOP_LEFT = "╭";
+    private static final String CORNER_TOP_RIGHT = "╮";
+    private static final String CORNER_BOTTOM_LEFT = "╰";
+    private static final String CORNER_BOTTOM_RIGHT = "╯";
+    private static final String HORIZONTAL = "─";
+    private static final String VERTICAL = "│";
+
+    private final AnsiPalette palette;
+
+    public ToolResultBox() {
+        this(AnsiPalette.DEFAULT);
+    }
+
+    public ToolResultBox(AnsiPalette palette) {
+        this.palette = palette;
+    }
+
+    /**
+     * Format a tool-result block. Multi-line output is split on {@code \n} and each line wrapped in
+     * a side border; the box auto-sizes to the longest visible content (header label or any body
+     * line, whichever is wider).
+     */
+    public String render(String tool_name, String output, boolean is_error) {
+        return render(tool_name, output, is_error, palette);
+    }
+
+    /** Same as {@link #render(String, String, boolean)} but using the supplied palette. */
+    public String render(String tool_name, String output, boolean is_error, AnsiPalette palette_override) {
+        AnsiPalette p = palette_override == null ? AnsiPalette.with_color_disabled() : palette_override;
+        String safe_name = tool_name == null ? "" : tool_name;
+        String safe_output = output == null ? "" : output;
+
+        List<String> body_lines = new ArrayList<>();
+        if (safe_output.isEmpty()) {
+            body_lines.add("");
+        } else {
+            for (String line : safe_output.split("\n", -1)) {
+                body_lines.add(line);
+            }
+            // split with limit -1 preserves trailing empty strings; trim a single trailing empty
+            // line if the content ended with a newline so we don't render a blank line at the end.
+            if (body_lines.size() > 1 && body_lines.get(body_lines.size() - 1).isEmpty()) {
+                body_lines.remove(body_lines.size() - 1);
+            }
+        }
+
+        String icon = is_error ? "✗" : "✓";
+        String first_body_with_icon = body_lines.isEmpty() ? icon + " " : icon + " " + body_lines.get(0);
+
+        int header_visible = visible_length(" " + safe_name + " ") + 2; // "─ name ─" with two ─
+        int body_visible = visible_length(first_body_with_icon);
+        for (int i = 1; i < body_lines.size(); i++) {
+            int line_visible = visible_length("  " + body_lines.get(i));
+            if (line_visible > body_visible) {
+                body_visible = line_visible;
+            }
+        }
+        int interior = Math.max(header_visible, body_visible);
+
+        StringBuilder builder = new StringBuilder();
+        // Header: ╭─ name ─...─╮
+        String header_label = safe_name.isEmpty() ? "" : (" " + safe_name + " ");
+        int header_dashes_after = Math.max(1, interior - visible_length(header_label) - 1);
+        String header_line = CORNER_TOP_LEFT
+                + HORIZONTAL
+                + header_label
+                + repeat(HORIZONTAL, header_dashes_after)
+                + CORNER_TOP_RIGHT;
+        builder.append(color_border(header_line, is_error, p));
+        builder.append('\n');
+
+        // First body line carries the status icon
+        appendBodyLine(builder, first_body_with_icon, interior, is_error, p);
+        for (int i = 1; i < body_lines.size(); i++) {
+            String body_line = "  " + body_lines.get(i);
+            appendBodyLine(builder, body_line, interior, is_error, p);
+        }
+
+        // Footer: ╰────────╯
+        String footer_line = CORNER_BOTTOM_LEFT + repeat(HORIZONTAL, interior + 1) + CORNER_BOTTOM_RIGHT;
+        builder.append(color_border(footer_line, is_error, p));
+        return builder.toString();
+    }
+
+    private void appendBodyLine(StringBuilder builder, String content, int interior, boolean is_error, AnsiPalette p) {
+        int padding = interior - visible_length(content);
+        if (padding < 0) {
+            padding = 0;
+        }
+        builder.append(color_border(VERTICAL, is_error, p));
+        builder.append(' ');
+        // Color the icon line specially when it carries the status glyph.
+        if (content.startsWith("✓ ")) {
+            builder.append(p.green("✓"));
+            builder.append(content.substring(1));
+        } else if (content.startsWith("✗ ")) {
+            builder.append(p.red("✗"));
+            builder.append(content.substring(1));
+        } else {
+            builder.append(content);
+        }
+        for (int i = 0; i < padding; i++) {
+            builder.append(' ');
+        }
+        builder.append(color_border(VERTICAL, is_error, p));
+        builder.append('\n');
+    }
+
+    private static String color_border(String text, boolean is_error, AnsiPalette palette) {
+        return is_error ? palette.red(text) : palette.green(text);
+    }
+
+    private static int visible_length(String text) {
+        return AnsiPalette.visible_width(text);
+    }
+
+    private static String repeat(String unit, int count) {
+        if (count <= 0) {
+            return "";
+        }
+        StringBuilder sb = new StringBuilder(unit.length() * count);
+        for (int i = 0; i < count; i++) {
+            sb.append(unit);
+        }
+        return sb.toString();
+    }
+}

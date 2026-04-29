@@ -1,0 +1,90 @@
+plugins {
+	id 'jclaude.java-application-conventions'
+	id 'jclaude.test-suites'
+}
+
+application {
+	mainClass = 'org.jclaude.cli.Main'
+	applicationName = 'jclaude'
+	executableDir = 'bin'
+}
+
+dependencies {
+	implementation project(':jclaude-api')
+	implementation project(':jclaude-commands')
+	implementation project(':jclaude-compat-harness')
+	implementation project(':jclaude-plugins')
+	implementation project(':jclaude-runtime')
+	implementation project(':jclaude-telemetry')
+	implementation project(':jclaude-tools')
+
+	implementation libs.bundles.jackson
+	implementation libs.picocli
+	annotationProcessor libs.picocli.codegen
+	implementation libs.bundles.jline
+	implementation libs.commonmark
+	implementation libs.logback.classic
+
+	integrationTestImplementation testFixtures(project(':jclaude-mock-anthropic-service'))
+	parityTestImplementation testFixtures(project(':jclaude-mock-anthropic-service'))
+}
+
+tasks.named('parityTest') { dependsOn 'installDist' }
+
+tasks.named('integrationTest') { dependsOn 'installDist' }
+
+// ---------------------------------------------------------------------------
+// Phase 6: native installer via the JDK `jpackage` tool (Java 21 ships it).
+//
+// Outputs (depending on host OS):
+//   macOS   -> build/jpackage/jclaude-1.0.0.pkg          (universal, headless-friendly;
+//             version bumped to 1.0.0 because macOS rejects 0.x)
+//   Linux   -> build/jpackage/jclaude_0.1.0_amd64.deb    (when fakeroot/dpkg present)
+//             plus build/distributions/jclaude-*.tar.gz  (always, via the
+//             `application` plugin's `distTar`)
+//   Windows -> build/jpackage/jclaude-0.1.0.exe          (requires WiX 3.x on PATH)
+//
+// `.dmg` is intentionally avoided — it requires an installed Apple Developer
+// signing identity to produce a working artifact and fails silently on hosts
+// without one. `.pkg` is more universal and works headless.
+//
+// Cross-compilation is not supported: jpackage only emits the host's package
+// type. If you need all three, run this task on each platform's CI runner.
+// ---------------------------------------------------------------------------
+tasks.register('jpackage', Exec) {
+	group = 'distribution'
+	description = 'Builds a native installer (.pkg/.exe/app-image) using the JDK jpackage tool.'
+	dependsOn 'installDist'
+
+	def jpackageBin = "${System.getProperty('java.home')}/bin/jpackage"
+	def installDir = layout.buildDirectory.dir('install/jclaude').get().asFile
+	def outputDir = layout.buildDirectory.dir('jpackage').get().asFile
+	def osName = System.getProperty('os.name').toLowerCase()
+	def packageType = osName.contains('mac')
+			? 'pkg'
+			: (osName.contains('win') ? 'exe' : 'app-image')
+	// macOS pkg/dmg reject app-versions whose major segment is 0; bump the
+	// installer version to 1.0.0 there. The actual CLI version reported by
+	// `jclaude --version` is unaffected — it's read from picocli annotations.
+	def appVersion = osName.contains('mac') ? '1.0.0' : '0.1.0'
+
+	inputs.dir(installDir)
+	outputs.dir(outputDir)
+
+	doFirst {
+		outputDir.deleteDir()
+		outputDir.mkdirs()
+	}
+
+	commandLine jpackageBin,
+			'--type', packageType,
+			'--name', 'jclaude',
+			'--app-version', appVersion,
+			'--input', new File(installDir, 'lib').absolutePath,
+			'--main-jar', 'jclaude-cli-0.1.0-SNAPSHOT.jar',
+			'--main-class', 'org.jclaude.cli.Main',
+			'--dest', outputDir.absolutePath,
+			'--vendor', 'jclaude',
+			'--copyright', 'MIT',
+			'--description', 'Java port of claw-code: a Claude-compatible CLI.'
+}

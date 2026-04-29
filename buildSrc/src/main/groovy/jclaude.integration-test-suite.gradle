@@ -1,0 +1,29 @@
+plugins {
+    id 'jvm-test-suite'
+}
+
+def libsCat = extensions.getByType(VersionCatalogsExtension).named('libs')
+
+testing {
+    suites {
+        integrationTest(JvmTestSuite) {
+            useJUnitJupiter(libsCat.findVersion('junit').get().toString())
+            dependencies {
+                implementation project()
+                implementation libsCat.findLibrary('assertj-core').get()
+                implementation libsCat.findLibrary('awaitility').get()
+                implementation libsCat.findLibrary('wiremock').get()
+                implementation libsCat.findLibrary('jackson-databind').get()
+            }
+            sources {
+                java { srcDirs = ['src/integrationTest/java'] }
+                resources { srcDirs = ['src/integrationTest/resources'] }
+            }
+            targets.all {
+                testTask.configure { shouldRunAfter test }
+            }
+        }
+    }
+}
+
+tasks.named('check') { dependsOn 'integrationTest' }

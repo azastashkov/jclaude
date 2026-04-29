@@ -1,0 +1,68 @@
+plugins {
+    id 'java'
+    id 'jacoco'
+    id 'com.diffplug.spotless'
+}
+
+def libsCat = extensions.getByType(VersionCatalogsExtension).named('libs')
+
+java {
+    toolchain {
+        languageVersion = JavaLanguageVersion.of(21)
+    }
+    withSourcesJar()
+}
+
+repositories {
+    mavenCentral()
+}
+
+tasks.withType(JavaCompile).configureEach {
+    options.encoding = 'UTF-8'
+    options.compilerArgs += ['-parameters', '-Xlint:all', '-Xlint:-serial', '-Xlint:-processing']
+}
+
+tasks.withType(Test).configureEach {
+    useJUnitPlatform()
+    testLogging {
+        events 'failed', 'skipped'
+        exceptionFormat = 'full'
+        showStackTraces = true
+    }
+    timeout = Duration.ofMinutes(10)
+}
+
+dependencies {
+    testImplementation libsCat.findLibrary('junit-jupiter').get()
+    testImplementation libsCat.findLibrary('junit-jupiter-params').get()
+    testImplementation libsCat.findLibrary('assertj-core').get()
+    testImplementation libsCat.findLibrary('awaitility').get()
+    testImplementation libsCat.findLibrary('mockito-core').get()
+    testRuntimeOnly libsCat.findLibrary('junit-platform-launcher').get()
+    testRuntimeOnly libsCat.findLibrary('logback-classic').get()
+}
+
+spotless {
+    java {
+        target 'src/**/*.java'
+        palantirJavaFormat(libsCat.findVersion('palantirJavaFormat').get().toString())
+        importOrder()
+        removeUnusedImports()
+        trimTrailingWhitespace()
+        endWithNewline()
+    }
+    groovyGradle {
+        target '*.gradle'
+        greclipse()
+        trimTrailingWhitespace()
+        endWithNewline()
+    }
+}
+
+tasks.named('check') { dependsOn 'spotlessCheck' }
+
+jacoco {
+    toolVersion = libsCat.findVersion('jacoco').get().toString()
+}
+
+tasks.named('test') { finalizedBy 'jacocoTestReport' }

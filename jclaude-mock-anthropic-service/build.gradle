@@ -1,0 +1,18 @@
+plugins {
+	id 'jclaude.java-application-conventions'
+	id 'java-test-fixtures'
+}
+
+application {
+	mainClass = 'org.jclaude.mockanthropic.Main'
+	applicationName = 'jclaude-mock-anthropic-service'
+	executableDir = 'bin'
+}
+
+dependencies {
+	implementation project(':jclaude-api')
+	implementation libs.bundles.jackson
+
+	testFixturesApi project(':jclaude-api')
+	testFixturesImplementation libs.bundles.jackson
+}

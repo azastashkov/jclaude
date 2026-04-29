@@ -1,0 +1,12 @@
+plugins {
+	id 'jclaude.java-library-conventions'
+}
+
+dependencies {
+	api project(':jclaude-api')
+	api project(':jclaude-commands')
+	api project(':jclaude-plugins')
+	api project(':jclaude-runtime')
+	api libs.bundles.jackson
+	implementation libs.networknt.jsonschema
+}

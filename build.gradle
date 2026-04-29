@@ -1,0 +1,10 @@
+allprojects {
+    group = 'org.jclaude'
+    version = '0.1.0-SNAPSHOT'
+}
+
+tasks.register('testAll') {
+    description = 'Runs the test task in every subproject.'
+    group = 'verification'
+    dependsOn subprojects.collect { it.path + ':test' }
+}

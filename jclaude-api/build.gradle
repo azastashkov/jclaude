@@ -1,0 +1,10 @@
+plugins {
+	id 'jclaude.java-library-conventions'
+	id 'jclaude.test-suites'
+}
+
+dependencies {
+	api project(':jclaude-runtime')
+	api project(':jclaude-telemetry')
+	api libs.bundles.jackson
+}

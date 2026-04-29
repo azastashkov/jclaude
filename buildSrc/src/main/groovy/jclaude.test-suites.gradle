@@ -1,0 +1,50 @@
+plugins {
+    id 'jclaude.integration-test-suite'
+}
+
+def libsCat = extensions.getByType(VersionCatalogsExtension).named('libs')
+
+testing {
+    suites {
+        parityTest(JvmTestSuite) {
+            useJUnitJupiter(libsCat.findVersion('junit').get().toString())
+            dependencies {
+                implementation project()
+                implementation libsCat.findLibrary('assertj-core').get()
+                implementation libsCat.findLibrary('awaitility').get()
+                implementation libsCat.findLibrary('jackson-databind').get()
+            }
+            sources {
+                java { srcDirs = ['src/parityTest/java'] }
+                resources { srcDirs = ['src/parityTest/resources'] }
+            }
+            targets.all {
+                testTask.configure { shouldRunAfter integrationTest }
+            }
+        }
+        ollamaTest(JvmTestSuite) {
+            useJUnitJupiter(libsCat.findVersion('junit').get().toString())
+            dependencies {
+                implementation project()
+                implementation libsCat.findLibrary('assertj-core').get()
+                implementation libsCat.findLibrary('awaitility').get()
+                implementation libsCat.findLibrary('jackson-databind').get()
+            }
+            sources {
+                java { srcDirs = ['src/ollamaTest/java'] }
+                resources { srcDirs = ['src/ollamaTest/resources'] }
+            }
+            targets.all {
+                testTask.configure {
+                    onlyIf { project.hasProperty('ollama') || System.getenv('OLLAMA_TESTS') == '1' }
+                }
+            }
+        }
+    }
+}
+
+tasks.register('checkAll') {
+    description = 'Runs unit, integration, parity, and ollama tests.'
+    group = 'verification'
+    dependsOn 'test', 'integrationTest', 'parityTest', 'ollamaTest'
+}

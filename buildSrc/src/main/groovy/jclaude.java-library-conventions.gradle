@@ -1,0 +1,10 @@
+plugins {
+    id 'jclaude.java-common-conventions'
+    id 'java-library'
+}
+
+def libsCat = extensions.getByType(VersionCatalogsExtension).named('libs')
+
+dependencies {
+    api libsCat.findLibrary('slf4j-api').get()
+}

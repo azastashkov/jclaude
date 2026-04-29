@@ -1,0 +1,54 @@
+[versions]
+junit = "5.11.3"
+assertj = "3.26.3"
+awaitility = "4.2.2"
+mockito = "5.14.2"
+wiremock = "3.10.0"
+jackson = "2.18.2"
+networknt-jsonschema = "1.5.6"
+picocli = "4.7.6"
+jline = "3.27.1"
+commonmark = "0.24.0"
+slf4j = "2.0.16"
+logback = "1.5.13"
+cronutils = "9.2.1"
+pdfbox = "3.0.3"
+palantirJavaFormat = "2.50.0"
+spotless = "7.0.2"
+shadow = "8.3.5"
+jacoco = "0.8.12"
+
+[libraries]
+jackson-databind     = { module = "com.fasterxml.jackson.core:jackson-databind", version.ref = "jackson" }
+jackson-annotations  = { module = "com.fasterxml.jackson.core:jackson-annotations", version.ref = "jackson" }
+jackson-core         = { module = "com.fasterxml.jackson.core:jackson-core", version.ref = "jackson" }
+jackson-jsr310       = { module = "com.fasterxml.jackson.datatype:jackson-datatype-jsr310", version.ref = "jackson" }
+jackson-jdk8         = { module = "com.fasterxml.jackson.datatype:jackson-datatype-jdk8", version.ref = "jackson" }
+networknt-jsonschema = { module = "com.networknt:json-schema-validator", version.ref = "networknt-jsonschema" }
+picocli              = { module = "info.picocli:picocli", version.ref = "picocli" }
+picocli-codegen      = { module = "info.picocli:picocli-codegen", version.ref = "picocli" }
+jline-terminal       = { module = "org.jline:jline-terminal", version.ref = "jline" }
+jline-terminal-jansi = { module = "org.jline:jline-terminal-jansi", version.ref = "jline" }
+jline-reader         = { module = "org.jline:jline-reader", version.ref = "jline" }
+jline-style          = { module = "org.jline:jline-style", version.ref = "jline" }
+commonmark           = { module = "org.commonmark:commonmark", version.ref = "commonmark" }
+slf4j-api            = { module = "org.slf4j:slf4j-api", version.ref = "slf4j" }
+logback-classic      = { module = "ch.qos.logback:logback-classic", version.ref = "logback" }
+cronutils            = { module = "com.cronutils:cron-utils", version.ref = "cronutils" }
+pdfbox               = { module = "org.apache.pdfbox:pdfbox", version.ref = "pdfbox" }
+junit-jupiter            = { module = "org.junit.jupiter:junit-jupiter", version.ref = "junit" }
+junit-jupiter-params     = { module = "org.junit.jupiter:junit-jupiter-params", version.ref = "junit" }
+junit-platform-launcher  = { module = "org.junit.platform:junit-platform-launcher" }
+assertj-core             = { module = "org.assertj:assertj-core", version.ref = "assertj" }
+awaitility               = { module = "org.awaitility:awaitility", version.ref = "awaitility" }
+mockito-core             = { module = "org.mockito:mockito-core", version.ref = "mockito" }
+wiremock                 = { module = "org.wiremock:wiremock-standalone", version.ref = "wiremock" }
+
+[bundles]
+jackson    = ["jackson-databind", "jackson-annotations", "jackson-core", "jackson-jsr310", "jackson-jdk8"]
+jline      = ["jline-terminal", "jline-terminal-jansi", "jline-reader", "jline-style"]
+testing    = ["junit-jupiter", "assertj-core", "awaitility", "mockito-core"]
+
+[plugins]
+spotless = { id = "com.diffplug.spotless", version.ref = "spotless" }
+shadow   = { id = "com.gradleup.shadow", version.ref = "shadow" }

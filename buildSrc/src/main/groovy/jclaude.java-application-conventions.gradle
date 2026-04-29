@@ -1,0 +1,17 @@
+plugins {
+    id 'jclaude.java-library-conventions'
+    id 'application'
+    id 'com.gradleup.shadow'
+}
+
+application {
+    applicationDefaultJvmArgs = ['-XX:+UseG1GC', '-XX:MaxRAMPercentage=75', '-Dfile.encoding=UTF-8']
+}
+
+shadowJar {
+    archiveClassifier = 'all'
+    mergeServiceFiles()
+    exclude 'META-INF/*.SF', 'META-INF/*.DSA', 'META-INF/*.RSA'
+}
+
+tasks.named('build') { dependsOn 'distZip', 'distTar', 'shadowJar' }

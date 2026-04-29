@@ -1,0 +1,19 @@
+rootProject.name = 'jclaude'
+
+include 'jclaude-api'
+include 'jclaude-cli'
+include 'jclaude-commands'
+include 'jclaude-compat-harness'
+include 'jclaude-mock-anthropic-service'
+include 'jclaude-plugins'
+include 'jclaude-runtime'
+include 'jclaude-telemetry'
+include 'jclaude-tools'
+
+rootProject.children.each { p -> p.projectDir = new File(rootDir, p.name) }
+
+dependencyResolutionManagement {
+    repositories {
+        mavenCentral()
+    }
+}
