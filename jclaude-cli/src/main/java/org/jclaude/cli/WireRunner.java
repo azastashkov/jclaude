@@ -89,7 +89,15 @@ public final class WireRunner {
         }
         if (command.output_format() == OutputFormat.JSON) {
             new JsonOutputRenderer().render(summary, built.resolved_model());
+        } else if (command.output_style() == OutputStyle.CLAUDE_CODE) {
+            // Claude Code style works in one-shot mode too — bullet headers + indented body
+            // render fine on a non-TTY (the TerminalRenderer auto-disables colors when piped).
+            new org.jclaude.cli.render.TerminalRenderer(
+                            System.out, org.jclaude.cli.render.AnsiPalette.DEFAULT, OutputStyle.CLAUDE_CODE)
+                    .render(summary, command.compact());
         } else {
+            // Default jclaude style: keep the plain `[tool_use]/[tool_result]` text output so
+            // it's friendly to grep/awk pipelines.
             new TextOutputRenderer().render(summary, command.compact());
         }
         return 0;
@@ -102,7 +110,7 @@ public final class WireRunner {
             return built.error_code();
         }
         try {
-            Repl repl = Repl.build(built.runtime(), built.prompter());
+            Repl repl = Repl.build(built.runtime(), built.prompter(), command.output_style());
             return repl.run();
         } catch (java.io.IOException error) {
             System.err.println("error: failed to open terminal — " + error.getMessage());

@@ -54,14 +54,21 @@ public final class Repl {
     }
 
     /**
-     * Build a Repl using sensible defaults: stdout/stderr, default ANSI palette, and a fresh
-     * {@link LineReader} backed by the user's home history file.
+     * Build a Repl using sensible defaults: stdout/stderr, default ANSI palette, the supplied
+     * output style, and a fresh {@link LineReader} backed by the user's home history file.
      */
-    public static Repl build(ConversationRuntime runtime, PermissionPrompter prompter) throws IOException {
+    public static Repl build(
+            ConversationRuntime runtime, PermissionPrompter prompter, org.jclaude.cli.OutputStyle style)
+            throws IOException {
         AnsiPalette palette = AnsiPalette.DEFAULT;
-        TerminalRenderer renderer = new TerminalRenderer(System.out, palette);
+        TerminalRenderer renderer = new TerminalRenderer(System.out, palette, style);
         LineReader reader = new LineReader("> ");
         return new Repl(runtime, prompter, renderer, reader, System.out, System.err);
+    }
+
+    /** Default-style overload preserved for tests / legacy callers. */
+    public static Repl build(ConversationRuntime runtime, PermissionPrompter prompter) throws IOException {
+        return build(runtime, prompter, org.jclaude.cli.OutputStyle.JCLAUDE);
     }
 
     /** Run the REPL until the user issues an exit / EOF. Returns 0 on normal termination. */

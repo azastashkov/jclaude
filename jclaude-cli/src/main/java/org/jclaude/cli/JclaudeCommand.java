@@ -84,6 +84,14 @@ public final class JclaudeCommand implements Callable<Integer> {
             defaultValue = "0")
     private long max_tokens;
 
+    @Option(
+            names = {"--style"},
+            description = "REPL output style: jclaude (rounded tool boxes, default) or claude-code "
+                    + "(bullet-prefixed inline tool calls).",
+            defaultValue = "jclaude",
+            converter = OutputStyleConverter.class)
+    private OutputStyle output_style;
+
     @Parameters(arity = "0..*", description = "Positional prompt words (alternative to -p).")
     private List<String> positional_prompt;
 
@@ -123,6 +131,10 @@ public final class JclaudeCommand implements Callable<Integer> {
         return max_tokens;
     }
 
+    public OutputStyle output_style() {
+        return output_style;
+    }
+
     public List<String> positional_prompt() {
         return positional_prompt;
     }
@@ -147,6 +159,14 @@ public final class JclaudeCommand implements Callable<Integer> {
         @Override
         public PermissionModeOption convert(String value) {
             return PermissionModeOption.parse(value);
+        }
+    }
+
+    /** picocli converter for {@link OutputStyle}. */
+    public static final class OutputStyleConverter implements picocli.CommandLine.ITypeConverter<OutputStyle> {
+        @Override
+        public OutputStyle convert(String value) {
+            return OutputStyle.parse(value);
         }
     }
 }
