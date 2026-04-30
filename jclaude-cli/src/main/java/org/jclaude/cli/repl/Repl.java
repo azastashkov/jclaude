@@ -106,10 +106,17 @@ public final class Repl {
                 continue;
             }
 
-            // Forward as user prompt to the runtime, with a spinner that ticks while the turn is
-            // in flight (model streaming + tool dispatches). Mirrors the Claude Code CLI feel.
+            // Forward as user prompt to the runtime. In claude-code style we drive an animated
+            // sparkle spinner with a random verb (matches the Claude Code CLI feel); the default
+            // jclaude style runs without a progress indicator since the rounded tool boxes already
+            // arrive incrementally.
             try {
-                TurnSummary summary = run_turn_with_spinner(line);
+                TurnSummary summary;
+                if (renderer.style() == org.jclaude.cli.OutputStyle.CLAUDE_CODE) {
+                    summary = run_turn_with_claude_code_spinner(line);
+                } else {
+                    summary = runtime.run_turn(line, prompter);
+                }
                 renderer.render(summary, false);
             } catch (RuntimeException error) {
                 err.println(renderer.palette().red("error: " + error.getMessage()));
@@ -118,31 +125,72 @@ public final class Repl {
         }
     }
 
+    /** Sparkle frames for the Claude Code-style spinner. */
+    private static final String[] CLAUDE_CODE_SPARKLES = {"✻", "✶", "✷", "✸", "✺", "✣", "✤", "✥"};
+
     /**
-     * Run one turn with an animated spinner. The spinner ticks every 100&nbsp;ms on a background
-     * virtual thread, displaying elapsed time alongside the rotating glyph; it stops cleanly
-     * before the renderer prints results so the line is clear.
-     *
-     * <p>Any exception from {@code runtime.run_turn} is allowed to propagate after the spinner is
-     * cancelled, so the caller's existing error path is unchanged.
+     * Verb pool for the Claude Code-style status line. One verb is chosen at random per turn so
+     * different turns feel different without flickering inside a single turn. List intentionally
+     * includes a mix of energetic + understated words to mirror the upstream tool's vibe.
      */
-    private TurnSummary run_turn_with_spinner(String line) {
-        org.jclaude.cli.render.Spinner spinner = new org.jclaude.cli.render.Spinner(out, renderer.palette());
+    private static final String[] CLAUDE_CODE_VERBS = {
+        "Tinkering",
+        "Cogitating",
+        "Pondering",
+        "Plotting",
+        "Marshaling",
+        "Brewing",
+        "Concocting",
+        "Crafting",
+        "Forging",
+        "Whisking",
+        "Conjuring",
+        "Devising",
+        "Wrangling",
+        "Untangling",
+        "Spelunking",
+        "Reticulating",
+        "Composing",
+        "Computing",
+        "Working",
+        "Hunting"
+    };
+
+    /**
+     * Drive a Claude Code-style sparkle spinner alongside {@link ConversationRuntime#run_turn}.
+     * Format: {@code ✻ Tinkering… (3s)}, sparkle cycling every 120 ms, elapsed seconds updating
+     * each tick, verb fixed for the duration of the turn. Cancels cleanly in the finally clause
+     * and clears the line before returning so the renderer prints on a clean cursor.
+     */
+    private TurnSummary run_turn_with_claude_code_spinner(String line) {
+        AnsiPalette p = renderer.palette();
+        String verb = CLAUDE_CODE_VERBS[
+                java.util.concurrent.ThreadLocalRandom.current().nextInt(CLAUDE_CODE_VERBS.length)];
         long started = System.nanoTime();
-        spinner.start("Working");
         java.util.concurrent.atomic.AtomicBoolean done = new java.util.concurrent.atomic.AtomicBoolean(false);
+        java.util.concurrent.atomic.AtomicInteger frame = new java.util.concurrent.atomic.AtomicInteger(0);
         Thread ticker = Thread.ofVirtual().start(() -> {
             while (!done.get()) {
                 try {
-                    Thread.sleep(100);
+                    Thread.sleep(120);
                 } catch (InterruptedException e) {
                     return;
                 }
                 if (done.get()) {
                     return;
                 }
-                long elapsed_seconds = (System.nanoTime() - started) / 1_000_000_000L;
-                spinner.start("Working (" + elapsed_seconds + "s)");
+                long elapsed = (System.nanoTime() - started) / 1_000_000_000L;
+                String sparkle = CLAUDE_CODE_SPARKLES[frame.getAndIncrement() % CLAUDE_CODE_SPARKLES.length];
+                StringBuilder buf = new StringBuilder();
+                buf.append('\r')
+                        .append(p.spinner_active(sparkle + " " + verb + "…"))
+                        .append(p.dim(" (" + elapsed + "s)"))
+                        .append("                    "); // pad so longer prior labels are erased
+                buf.append('\r')
+                        .append(p.spinner_active(sparkle + " " + verb + "…"))
+                        .append(p.dim(" (" + elapsed + "s)"));
+                out.print(buf.toString());
+                out.flush();
             }
         });
         try {
@@ -155,7 +203,13 @@ public final class Repl {
             } catch (InterruptedException ignored) {
                 Thread.currentThread().interrupt();
             }
-            spinner.stop();
+            // Clear the spinner line before the renderer prints.
+            out.print("\r");
+            for (int i = 0; i < 64; i++) {
+                out.print(' ');
+            }
+            out.print('\r');
+            out.flush();
         }
     }
 
