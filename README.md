@@ -34,6 +34,42 @@ OPENAI_BASE_URL=http://localhost:11434/v1 OPENAI_API_KEY=ollama \
 
 You'll get a JLine 3 line editor (prompt `>`) with history at `~/.jclaude/history`, tab completion over the 139 slash command specs, and streaming responses rendered through the markdown + ANSI pipeline. `/exit` or Ctrl+D quits.
 
+## Output styles
+
+`--style` switches the in-REPL (and one-shot text) layout between two presets:
+
+- `--style jclaude` (default): rounded `╭─ tool ─╮` boxes with the full pretty-printed tool result inside, then a dim `[turn] iterations=…` footer, then the model's prose answer at the bottom. Long file reads are line-wrapped at 100 chars and capped at 40 lines with a `… (N more lines)` footer. In one-shot text mode (`--output-format text`, no `-p` style override), default jclaude keeps the plain `[tool_use] / [tool_result] / [turn]` format that's friendly to grep / awk pipelines.
+- `--style claude-code` (alias `cc`): mirrors the Claude Code CLI feel. Tool calls render chronologically with a bullet-prefixed header and a single-line summary under `⎿`, the model's prose answer follows after a blank line, and a dim `iterations=… · input · output` footer closes the turn.
+
+```text
+> Write hello.txt with content: hi
+● write_file(path=hello.txt, content=hi)
+  ⎿  Created /tmp/.../hello.txt (2 bytes)
+
+The file `hello.txt` has been successfully created with the content "hi".
+
+  iterations=2 · 715 input · 50 output
+```
+
+Per-tool terse summaries (`format_terse` in `ToolResultPrettyPrinter`):
+
+| Tool | One-line body |
+|---|---|
+| `read_file` | `Read N lines (B kB)` |
+| `write_file` | `Created/Updated <path> (N bytes)` |
+| `edit_file` | `Edited <path> (N hunks)` |
+| `glob_search` | `N files found [(truncated)]` |
+| `grep_search` | `N matches across M files` / `no matches` |
+| `bash` | single-line stdout, or `exit N: …`, or `ok (N lines, B kB)` |
+| `WebFetch` | `HTTP <status> (B kB)` |
+| `WebSearch` | `N results (status=ok\|no_results\|…)` |
+| `TodoWrite` | `X/Y todos completed` |
+| `Sleep` | `Slept N ms` |
+
+Code blocks the model emits (` ```java`, ` ```json`, ` ```bash`, etc.) are syntax-highlighted with a JetBrains IntelliJ IDEA *Islands Dark*-themed palette via 24-bit ANSI: keywords `#CF8E6D`, strings `#6AAB73`, numbers `#2AACB8`, types `#FFC66D`, comments `#7A7E85`. Aliases `js`, `ts`, `py`, `sh`, `kt`, `yml`, `rs`, `cpp`, `cs` are normalized; unknown languages and disabled-color terminals (`NO_COLOR=1`, non-TTY) pass the body through unchanged.
+
+`--compact` suppresses tool boxes (in `jclaude` style) or tool blocks (in `claude-code` style) entirely — only the model's prose answer remains.
+
 ## Modules
 
 | Module | What's in it |
@@ -69,17 +105,18 @@ Current test count: 963 across all suites (901 unit + 39 integration + 13 parity
 |---|---|---|
 | `--model <name>` | `claude-sonnet-4-6` | Aliases (`sonnet`, `haiku`, `opus`, `grok`, `kimi`) plus prefixed names (`openai/...`, `qwen/...`, `claude-...`). |
 | `--output-format text\|json` | `text` | JSON shape: `{ kind, model, message, iterations, tool_uses, tool_results, usage, estimated_cost }`. |
+| `--style jclaude\|claude-code` | `jclaude` | REPL + one-shot text presentation. `claude-code` (alias `cc`) emits chronological `● tool(args)` headers with `⎿  …` one-line bodies. See [Output styles](#output-styles). |
 | `--permission-mode read-only\|workspace-write\|danger-full-access` | `read-only` | Gates tool execution. |
 | `--allowedTools <csv>` | (all) | Restrict the tool surface offered to the model. |
 | `-p, --print <prompt>` | — | One-shot mode (skip the REPL). |
 | `--resume <session-id-or-path>` | — | Resume a JSONL session. |
-| `--compact` | off | Terse text output. |
+| `--compact` | off | Suppress tool blocks; show only the model's prose answer. |
 | `--dangerously-skip-permissions` | off | Skip user approval prompts. |
 | `--max-tokens <n>` | model-specific | Override the per-model default. |
 
 ## Environment variables
 
-`ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_BASE_URL`, `ANTHROPIC_MODEL`, `OPENAI_API_KEY`, `OPENAI_BASE_URL`, `XAI_API_KEY`, `XAI_BASE_URL`, `DASHSCOPE_API_KEY`, `DASHSCOPE_BASE_URL`, `JCLAUDE_CONFIG_HOME`, `NO_COLOR`, `OLLAMA_TESTS`, `JCLAUDE_BIN`, `JCLAUDE_MCP_BRIDGE_ENABLED`, `JCLAUDE_WORKER_REGISTRY_ENABLED`.
+`ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_BASE_URL`, `ANTHROPIC_MODEL`, `OPENAI_API_KEY`, `OPENAI_BASE_URL`, `XAI_API_KEY`, `XAI_BASE_URL`, `DASHSCOPE_API_KEY`, `DASHSCOPE_BASE_URL`, `JCLAUDE_CONFIG_HOME`, `NO_COLOR`, `OLLAMA_TESTS`, `JCLAUDE_BIN`, `JCLAUDE_MCP_BRIDGE_ENABLED`, `JCLAUDE_WORKER_REGISTRY_ENABLED`, `JCLAUDE_WEBSEARCH_DISABLED`.
 
 ## Subcommands
 
