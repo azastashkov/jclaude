@@ -65,6 +65,62 @@ class ConversationRuntimeProgressListenerTest {
     }
 
     @Test
+    void runtime_fires_on_iteration_starting_before_each_stream_call() {
+        // Records the order of iteration markers and tool/text signals so we can assert that
+        // on_iteration_starting precedes the per-iteration adapter activity on every loop pass.
+        List<String> received = new ArrayList<>();
+
+        ProgressListener listener = new ProgressListener() {
+            @Override
+            public void on_iteration_starting() {
+                received.add("iter");
+            }
+
+            @Override
+            public void on_tool_starting(String tool_name) {
+                received.add("tool:" + tool_name);
+            }
+
+            @Override
+            public void on_text_delta_received(int char_count) {
+                received.add("text:" + char_count);
+            }
+        };
+
+        ApiClient api_client = new ApiClient() {
+            int call = 0;
+
+            @Override
+            public List<AssistantEvent> stream(ApiRequest request) {
+                throw new AssertionError("runtime must call the 2-arg stream overload");
+            }
+
+            @Override
+            public List<AssistantEvent> stream(ApiRequest request, ProgressListener supplied) {
+                call += 1;
+                if (call == 1) {
+                    supplied.on_tool_starting("noop");
+                    return List.of(
+                            new AssistantEvent.ToolUse("call_1", "noop", "{}"), AssistantEvent.MessageStop.INSTANCE);
+                }
+                supplied.on_text_delta_received(5);
+                return List.of(new AssistantEvent.TextDelta("hello"), AssistantEvent.MessageStop.INSTANCE);
+            }
+        };
+
+        StaticToolExecutor tools = StaticToolExecutor.create().register("noop", input -> "ok");
+        ConversationRuntime runtime = new ConversationRuntime(
+                Session.create(), api_client, tools, new PermissionPolicy(PermissionMode.WORKSPACE_WRITE), List.of("s"))
+                .with_progress_listener(listener);
+
+        runtime.run_turn("hi", request -> new PermissionPromptDecision.Allow());
+
+        // Two iterations of the runtime loop → two "iter" markers, each appearing before its
+        // own stream activity. This is the signal the spinner uses to clear stale tool labels.
+        assertThat(received).containsExactly("iter", "tool:noop", "iter", "text:5");
+    }
+
+    @Test
     void runtime_uses_no_op_listener_when_none_supplied_and_does_not_throw() {
         ApiClient api_client = new ApiClient() {
             @Override

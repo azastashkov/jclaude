@@ -71,6 +71,7 @@ public final class ToolDispatcher implements ToolExecutor {
     private static final ObjectMapper MAPPER = JclaudeMappers.standard();
     private static final long REMOTE_TRIGGER_TIMEOUT_SECONDS = 30L;
     private static final int REMOTE_TRIGGER_MAX_BODY = 8192;
+    private static final int BASH_MAX_STREAM_CHARS = 16_384;
     private static final long MAX_SLEEP_DURATION_MS = 300_000L;
     private static final String NOT_YET_IMPLEMENTED = "not yet implemented";
 
@@ -457,7 +458,29 @@ public final class ToolDispatcher implements ToolExecutor {
         BashCommandInput bashInput = new BashCommandInput(command, workspace_root, timeout_ms, background);
         BashCommandOutput output = Bash.execute(bashInput);
         boolean is_error = output.exit_code() != 0 || output.timed_out();
-        return new ToolResult(MAPPER.writeValueAsString(output), is_error);
+        BashCommandOutput capped = new BashCommandOutput(
+                cap_bash_stream(output.stdout()),
+                cap_bash_stream(output.stderr()),
+                output.exit_code(),
+                output.timed_out());
+        return new ToolResult(MAPPER.writeValueAsString(capped), is_error);
+    }
+
+    /**
+     * Cap a bash stream to {@link #BASH_MAX_STREAM_CHARS} characters before returning it to the
+     * model. A loose `find` or build log can produce hundreds of KB; sending it back unedited blows
+     * past local-model context windows and leaves the user staring at "Calling bash…" while the
+     * post-tool prompt is still being eval'd. The truncated suffix preserves the head of the
+     * output and reports the original length so the model knows it lost data.
+     */
+    private static String cap_bash_stream(String stream) {
+        if (stream.length() <= BASH_MAX_STREAM_CHARS) {
+            return stream;
+        }
+        return stream.substring(0, BASH_MAX_STREAM_CHARS)
+                + "\n\n[output truncated — "
+                + stream.length()
+                + " chars total]";
     }
 
     private ToolResult dispatch_todo_write(JsonNode input) throws Exception {

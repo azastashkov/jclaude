@@ -33,4 +33,12 @@ public interface ProgressListener {
      * if they want a running total.
      */
     default void on_text_delta_received(int char_count) {}
+
+    /**
+     * Called by {@link ConversationRuntime} at the top of every iteration of its model loop —
+     * once before the first stream and again after each tool result is appended. Spinner-style
+     * listeners use this to clear per-iteration state (e.g. the "Calling bash" label) so the next
+     * iteration's verb reflects what the model is actually doing rather than the last tool name.
+     */
+    default void on_iteration_starting() {}
 }

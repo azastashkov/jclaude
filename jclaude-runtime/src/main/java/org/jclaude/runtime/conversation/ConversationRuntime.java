@@ -107,6 +107,10 @@ public final class ConversationRuntime {
             if (iterations > max_iterations) {
                 throw new RuntimeError("conversation loop exceeded the maximum number of iterations");
             }
+            // Notify listeners before every stream so spinner state (e.g. "Calling bash") that
+            // belongs to the previous iteration's tool call gets cleared and the next iteration's
+            // verb reflects current activity.
+            progress_listener.on_iteration_starting();
 
             ApiRequest request = new ApiRequest(system_prompt, session.messages());
             List<AssistantEvent> events;

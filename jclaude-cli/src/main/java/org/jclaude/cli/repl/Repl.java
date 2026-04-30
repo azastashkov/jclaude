@@ -3,6 +3,8 @@ package org.jclaude.cli.repl;
 import java.io.IOException;
 import java.io.PrintStream;
 import java.util.Optional;
+import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicReference;
 import org.jclaude.cli.input.LineReader;
 import org.jclaude.cli.render.AnsiPalette;
 import org.jclaude.cli.render.TerminalRenderer;
@@ -209,21 +211,10 @@ public final class Repl {
 
         // Live signal updated by the adapter as wire events arrive: how many text characters have
         // streamed in this turn, and the most recent tool name we've seen the model start.
-        java.util.concurrent.atomic.AtomicLong char_count = new java.util.concurrent.atomic.AtomicLong(0L);
-        java.util.concurrent.atomic.AtomicReference<String> latest_tool =
-                new java.util.concurrent.atomic.AtomicReference<>(null);
+        AtomicLong char_count = new AtomicLong(0L);
+        AtomicReference<String> latest_tool = new AtomicReference<>(null);
 
-        ProgressListener listener = new ProgressListener() {
-            @Override
-            public void on_text_delta_received(int chars) {
-                char_count.addAndGet(chars);
-            }
-
-            @Override
-            public void on_tool_starting(String tool_name) {
-                latest_tool.set(tool_name);
-            }
-        };
+        ProgressListener listener = build_spinner_listener(char_count, latest_tool);
         runtime.with_progress_listener(listener);
 
         Thread ticker = Thread.ofVirtual().start(() -> {
@@ -296,6 +287,36 @@ public final class Repl {
             runtime.with_progress_listener(ProgressListener.NO_OP);
             clear_two_line_status(printed_once.get());
         }
+    }
+
+    /**
+     * Build the {@link ProgressListener} that drives the claude-code spinner. Extracted (and
+     * package-private) so it can be unit-tested without driving the whole REPL — the live state
+     * is held in the supplied atomics, which the spinner ticker reads each frame.
+     *
+     * <p>{@code on_iteration_starting} clears {@code latest_tool} so iteration 2 of the model
+     * loop doesn't keep the previous iteration's "Calling bash" label while the model is actually
+     * generating post-tool prose. {@code char_count} is intentionally left untouched: the spinner
+     * shows a per-turn cumulative count, not a per-iteration one.
+     */
+    static ProgressListener build_spinner_listener(
+            AtomicLong char_count, AtomicReference<String> latest_tool) {
+        return new ProgressListener() {
+            @Override
+            public void on_text_delta_received(int chars) {
+                char_count.addAndGet(chars);
+            }
+
+            @Override
+            public void on_tool_starting(String tool_name) {
+                latest_tool.set(tool_name);
+            }
+
+            @Override
+            public void on_iteration_starting() {
+                latest_tool.set(null);
+            }
+        };
     }
 
     /**

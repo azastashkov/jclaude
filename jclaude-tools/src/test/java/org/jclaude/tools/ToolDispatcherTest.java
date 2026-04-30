@@ -190,6 +190,41 @@ class ToolDispatcherTest {
     }
 
     @Test
+    void bash_truncates_oversized_stdout_with_marker_and_preserves_leading_content(@TempDir Path workspace)
+            throws IOException {
+        // Generate ~64 KB of stdout (8192 lines * 8 chars each) — well above the cap.
+        ObjectNode input = MAPPER.createObjectNode();
+        input.put("command", "yes ABCDEFG | head -n 8192");
+
+        ToolResult result = dispatcher_for(workspace).execute("bash", input);
+
+        assertThat(result.is_error()).isFalse();
+        JsonNode payload = MAPPER.readTree(result.output());
+        String stdout = payload.get("stdout").asText();
+        // Leading content must survive — the model still sees the head of the output.
+        assertThat(stdout).startsWith("ABCDEFG\n");
+        // The truncation marker has to advertise the original total so the model knows it lost data.
+        assertThat(stdout).contains("[output truncated").contains("chars total]");
+        // Cap should keep the returned stdout under 64 KB even when the underlying command
+        // produced ~64 KB — pick a generous bound that still proves truncation happened.
+        assertThat(stdout.length()).isLessThan(40_000);
+    }
+
+    @Test
+    void bash_does_not_alter_stdout_below_truncation_cap(@TempDir Path workspace) throws IOException {
+        ObjectNode input = MAPPER.createObjectNode();
+        input.put("command", "echo small-output");
+
+        ToolResult result = dispatcher_for(workspace).execute("bash", input);
+
+        assertThat(result.is_error()).isFalse();
+        JsonNode payload = MAPPER.readTree(result.output());
+        String stdout = payload.get("stdout").asText();
+        // Output that fits comfortably in the cap must come through verbatim, with no marker.
+        assertThat(stdout).isEqualTo("small-output\n").doesNotContain("truncated");
+    }
+
+    @Test
     void todo_write_dispatches_to_in_memory_store(@TempDir Path workspace) throws IOException {
         TodoStore store = new TodoStore();
         ToolDispatcher dispatcher = new ToolDispatcher(

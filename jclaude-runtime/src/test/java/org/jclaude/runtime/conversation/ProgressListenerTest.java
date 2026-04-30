@@ -13,9 +13,11 @@ class ProgressListenerTest {
         ProgressListener listener = ProgressListener.NO_OP;
         listener.on_tool_starting("read_file");
         listener.on_text_delta_received(42);
+        listener.on_iteration_starting();
         // Smoke check: NO_OP must be safe to call repeatedly with any payload.
         listener.on_tool_starting("");
         listener.on_text_delta_received(0);
+        listener.on_iteration_starting();
     }
 
     @Test
