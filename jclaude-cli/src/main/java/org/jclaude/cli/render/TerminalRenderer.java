@@ -133,28 +133,27 @@ public final class TerminalRenderer {
     }
 
     /**
-     * Claude Code-style: prose first, then a sequence of {@code ● tool(arg=value)} headers with an
-     * indented {@code ⎿  …} body. Pairs each tool_use with its matching tool_result by id (or by
-     * positional fallback), so a turn looks like:
+     * Claude Code-style: tool calls first (chronologically, each {@code ● tool(args)} header with
+     * a one-line {@code ⎿  …} terse summary), then prose, then a dim footer. Mirrors the actual
+     * Claude Code CLI layout where the user sees what tools ran before the synthesized answer.
      *
      * <pre>
-     * Looking at the file…
-     * ● Read(path=README.md)
-     *   ⎿  README.md:
-     *      # jclaude
-     *      A Java 21 port of the Rust …
-     *      … (40 more lines)
-     * ● Bash(echo hi)
-     *   ⎿  hi
+     * &gt; Show README.md
+     * ● read_file(path=README.md)
+     *   ⎿  Read 119 lines (4.2 kB)
+     * ● bash(command=wc -l README.md)
+     *   ⎿  119 README.md
+     *
+     * The README has 119 lines …
      *
      *   iterations=2 · 12.4k input · 60 output
      * </pre>
      */
     private void render_claude_code(TurnSummary summary, String assistant_rendered, boolean compact) {
-        if (!assistant_rendered.isEmpty()) {
-            out.println(assistant_rendered);
-        }
         if (compact) {
+            if (!assistant_rendered.isEmpty()) {
+                out.println(assistant_rendered);
+            }
             return;
         }
         java.util.Map<String, ContentBlock.ToolResult> results_by_id = new java.util.HashMap<>();
@@ -182,11 +181,17 @@ public final class TerminalRenderer {
                 String header_painted = r != null && r.is_error() ? palette.red(header) : palette.bold(header);
                 out.println(header_painted);
                 if (r != null) {
-                    String pretty = ToolResultPrettyPrinter.format(r.tool_name(), r.output());
-                    String trimmed = truncate_for_display(pretty, MAX_CLAUDE_CODE_BODY_LINES);
-                    print_indented_body(trimmed, r.is_error());
+                    // Terse one-liner per Claude Code convention: "Read 47 lines (1.2 kB)" rather
+                    // than echoing the file body. The model still receives the full envelope.
+                    String terse = ToolResultPrettyPrinter.format_terse(r.tool_name(), r.output());
+                    print_indented_body(terse, r.is_error());
                 }
             }
+        }
+        // Prose AFTER tools so the user sees what ran first, then the synthesized answer.
+        if (!assistant_rendered.isEmpty()) {
+            out.println();
+            out.println(assistant_rendered);
         }
         // Dim summary footer at the end so the next prompt has breathing room above it.
         out.println();

@@ -66,7 +66,7 @@ final class TerminalRendererStyleTest {
     }
 
     @Test
-    void claude_code_style_emits_bullet_headers_with_indented_body() {
+    void claude_code_style_emits_bullet_headers_then_prose_then_footer() {
         ByteArrayOutputStream buf = new ByteArrayOutputStream();
         PrintStream out = new PrintStream(buf, true, StandardCharsets.UTF_8);
         TerminalRenderer renderer =
@@ -75,20 +75,21 @@ final class TerminalRendererStyleTest {
         renderer.render(build_summary(), false);
 
         String text = buf.toString(StandardCharsets.UTF_8);
-        // Prose at the top.
-        int prose_idx = text.indexOf("I'll read the file");
-        assertThat(prose_idx).isGreaterThanOrEqualTo(0);
         // Bullet headers with one-line input summary.
         assertThat(text).contains("● read_file(path=README.md)");
         assertThat(text).contains("● bash(command=echo hi)");
-        // Indented body under ⎿.
+        // Indented body under ⎿ — terse one-liner per Claude Code convention, NOT the file body.
         assertThat(text).contains("⎿");
-        assertThat(text).contains("# jclaude");
-        // Bullet headers come AFTER prose.
+        assertThat(text).contains("Read"); // "Read N lines (M B)"
+        assertThat(text).doesNotContain("# jclaude"); // file body must NOT appear in cc-mode
+        // Tool calls come BEFORE prose (chronological).
         int first_bullet = text.indexOf("●");
-        assertThat(first_bullet).isGreaterThan(prose_idx);
-        // Footer with bullet-style summary.
-        assertThat(text).contains("iterations=2 · 120 input · 30 output");
+        int prose_idx = text.indexOf("I'll read the file");
+        assertThat(first_bullet).isGreaterThanOrEqualTo(0);
+        assertThat(prose_idx).isGreaterThan(first_bullet);
+        // Footer comes after both, with bullet-style summary.
+        int footer_idx = text.indexOf("iterations=2 · 120 input · 30 output");
+        assertThat(footer_idx).isGreaterThan(prose_idx);
         // No rounded box characters in claude-code mode.
         assertThat(text).doesNotContain("╭─");
         assertThat(text).doesNotContain("╰─");
