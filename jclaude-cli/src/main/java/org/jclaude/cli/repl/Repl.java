@@ -99,14 +99,56 @@ public final class Repl {
                 continue;
             }
 
-            // Forward as user prompt to the runtime.
+            // Forward as user prompt to the runtime, with a spinner that ticks while the turn is
+            // in flight (model streaming + tool dispatches). Mirrors the Claude Code CLI feel.
             try {
-                TurnSummary summary = runtime.run_turn(line, prompter);
+                TurnSummary summary = run_turn_with_spinner(line);
                 renderer.render(summary, false);
             } catch (RuntimeException error) {
                 err.println(renderer.palette().red("error: " + error.getMessage()));
                 err.flush();
             }
+        }
+    }
+
+    /**
+     * Run one turn with an animated spinner. The spinner ticks every 100&nbsp;ms on a background
+     * virtual thread, displaying elapsed time alongside the rotating glyph; it stops cleanly
+     * before the renderer prints results so the line is clear.
+     *
+     * <p>Any exception from {@code runtime.run_turn} is allowed to propagate after the spinner is
+     * cancelled, so the caller's existing error path is unchanged.
+     */
+    private TurnSummary run_turn_with_spinner(String line) {
+        org.jclaude.cli.render.Spinner spinner = new org.jclaude.cli.render.Spinner(out, renderer.palette());
+        long started = System.nanoTime();
+        spinner.start("Working");
+        java.util.concurrent.atomic.AtomicBoolean done = new java.util.concurrent.atomic.AtomicBoolean(false);
+        Thread ticker = Thread.ofVirtual().start(() -> {
+            while (!done.get()) {
+                try {
+                    Thread.sleep(100);
+                } catch (InterruptedException e) {
+                    return;
+                }
+                if (done.get()) {
+                    return;
+                }
+                long elapsed_seconds = (System.nanoTime() - started) / 1_000_000_000L;
+                spinner.start("Working (" + elapsed_seconds + "s)");
+            }
+        });
+        try {
+            return runtime.run_turn(line, prompter);
+        } finally {
+            done.set(true);
+            ticker.interrupt();
+            try {
+                ticker.join(500);
+            } catch (InterruptedException ignored) {
+                Thread.currentThread().interrupt();
+            }
+            spinner.stop();
         }
     }
 
