@@ -22,6 +22,7 @@ import org.jclaude.api.types.Usage;
 import org.jclaude.runtime.conversation.ApiClient;
 import org.jclaude.runtime.conversation.ApiRequest;
 import org.jclaude.runtime.conversation.AssistantEvent;
+import org.jclaude.runtime.conversation.ProgressListener;
 import org.jclaude.runtime.conversation.RuntimeError;
 import org.jclaude.runtime.session.ContentBlock;
 import org.jclaude.runtime.session.ConversationMessage;
@@ -58,9 +59,14 @@ public final class AnthropicRuntimeApiClient implements ApiClient {
 
     @Override
     public List<AssistantEvent> stream(ApiRequest runtime_request) {
+        return stream(runtime_request, ProgressListener.NO_OP);
+    }
+
+    @Override
+    public List<AssistantEvent> stream(ApiRequest runtime_request, ProgressListener listener) {
         MessageRequest wire_request = build_message_request(runtime_request);
         try (AnthropicClient.StreamingResponse response = client.stream_message(wire_request)) {
-            return translate_stream(response);
+            return translate_stream(response, listener);
         } catch (RuntimeException error) {
             if (error instanceof RuntimeError already) {
                 throw already;
@@ -145,6 +151,15 @@ public final class AnthropicRuntimeApiClient implements ApiClient {
 
     /** Translate the Anthropic-shape stream into the runtime-facing event list. */
     static List<AssistantEvent> translate_stream(Iterable<StreamEvent> events) {
+        return translate_stream(events, ProgressListener.NO_OP);
+    }
+
+    /**
+     * Listener-aware variant of {@link #translate_stream(Iterable)}. Pushes per-chunk signals to
+     * {@code listener} as wire events arrive — Claude's stream emits structured tool-use blocks,
+     * so {@code on_tool_starting} fires immediately at {@code content_block_start}.
+     */
+    static List<AssistantEvent> translate_stream(Iterable<StreamEvent> events, ProgressListener listener) {
         List<AssistantEvent> out = new ArrayList<>();
         Map<Integer, ToolUseAccumulator> tool_uses = new HashMap<>();
         Usage final_usage = null;
@@ -165,10 +180,12 @@ public final class AnthropicRuntimeApiClient implements ApiClient {
                         }
                     }
                     tool_uses.put(start.index(), acc);
+                    listener.on_tool_starting(use.name());
                 }
             } else if (event instanceof StreamEvent.ContentBlockDelta delta) {
                 if (delta.delta() instanceof BlockDelta.TextDelta td) {
                     out.add(new AssistantEvent.TextDelta(td.text()));
+                    listener.on_text_delta_received(td.text().length());
                 } else if (delta.delta() instanceof BlockDelta.InputJsonDelta json_delta) {
                     ToolUseAccumulator acc = tool_uses.get(delta.index());
                     if (acc != null) {

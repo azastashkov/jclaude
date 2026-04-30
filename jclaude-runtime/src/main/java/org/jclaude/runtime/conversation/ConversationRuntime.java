@@ -28,6 +28,7 @@ public final class ConversationRuntime {
     private long max_iterations;
     private final UsageTracker usage_tracker;
     private long auto_compaction_input_tokens_threshold;
+    private ProgressListener progress_listener = ProgressListener.NO_OP;
 
     public ConversationRuntime(
             Session session,
@@ -52,6 +53,16 @@ public final class ConversationRuntime {
 
     public ConversationRuntime with_auto_compaction_input_tokens_threshold(long threshold) {
         this.auto_compaction_input_tokens_threshold = threshold;
+        return this;
+    }
+
+    /**
+     * Install a {@link ProgressListener} that will receive per-chunk signals from the model
+     * adapter on every iteration of {@link #run_turn}. Pass {@link ProgressListener#NO_OP} (the
+     * default) to disable. The REPL uses this to power its live status spinner.
+     */
+    public ConversationRuntime with_progress_listener(ProgressListener listener) {
+        this.progress_listener = listener == null ? ProgressListener.NO_OP : listener;
         return this;
     }
 
@@ -100,7 +111,7 @@ public final class ConversationRuntime {
             ApiRequest request = new ApiRequest(system_prompt, session.messages());
             List<AssistantEvent> events;
             try {
-                events = api_client.stream(request);
+                events = api_client.stream(request, progress_listener);
             } catch (RuntimeError error) {
                 throw error;
             }

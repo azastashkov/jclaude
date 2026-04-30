@@ -10,6 +10,7 @@ import org.jclaude.commands.SlashCommandDispatcher;
 import org.jclaude.commands.SlashCommandResult;
 import org.jclaude.runtime.conversation.CompactionConfig;
 import org.jclaude.runtime.conversation.ConversationRuntime;
+import org.jclaude.runtime.conversation.ProgressListener;
 import org.jclaude.runtime.conversation.TurnSummary;
 import org.jclaude.runtime.permissions.PermissionPrompter;
 import org.jclaude.runtime.session.Session;
@@ -125,15 +126,17 @@ public final class Repl {
         }
     }
 
-    /** Sparkle frames for the Claude Code-style spinner. */
-    private static final String[] CLAUDE_CODE_SPARKLES = {"✻", "✶", "✷", "✸", "✺", "✣", "✤", "✥"};
+    /** Dot frames for the Claude Code-style status spinner. Pulse-like, not sparkle. */
+    private static final String[] CLAUDE_CODE_DOTS = {"·", "∙", "•", "∙"};
 
     /**
      * Verb pool for the Claude Code-style status line. One verb is chosen at random per turn so
-     * different turns feel different without flickering inside a single turn. List intentionally
-     * includes a mix of energetic + understated words to mirror the upstream tool's vibe.
+     * different turns feel different without flickering inside a single turn. Includes the
+     * marquee Claude Code verbs (Warping, Infusing, …) plus a stylistic long tail.
      */
     private static final String[] CLAUDE_CODE_VERBS = {
+        "Warping",
+        "Infusing",
         "Tinkering",
         "Cogitating",
         "Pondering",
@@ -153,22 +156,76 @@ public final class Repl {
         "Composing",
         "Computing",
         "Working",
-        "Hunting"
+        "Hunting",
+        "Channeling",
+        "Materializing"
     };
 
     /**
-     * Drive a Claude Code-style sparkle spinner alongside {@link ConversationRuntime#run_turn}.
-     * Format: {@code ✻ Tinkering… (3s)}, sparkle cycling every 120 ms, elapsed seconds updating
-     * each tick, verb fixed for the duration of the turn. Cancels cleanly in the finally clause
-     * and clears the line before returning so the renderer prints on a clean cursor.
+     * Tip pool surfaced under the spinner with a {@code ⎿  } continuation. One tip is chosen at
+     * random per turn (mirrors how Claude Code rotates contextual hints).
+     */
+    private static final String[] CLAUDE_CODE_TIPS = {
+        "Tip: Use /help to see available commands",
+        "Tip: --compact suppresses tool blocks; only the prose answer remains",
+        "Tip: Press Ctrl+D or type /exit to leave the REPL",
+        "Tip: --style jclaude switches to rounded boxes if you prefer the audit layout",
+        "Tip: --allowedTools restricts the tool surface offered to the model",
+        "Tip: --resume <session-id> reopens a JSONL session you previously ran"
+    };
+
+    /** ANSI: cursor previous line (col 0). */
+    private static final String CSI_CURSOR_PREV_LINE = "\033[F";
+    /** ANSI: cursor next line (col 0). */
+    private static final String CSI_CURSOR_NEXT_LINE = "\033[E";
+    /** ANSI: erase entire current line. */
+    private static final String CSI_ERASE_LINE = "\033[2K";
+
+    /**
+     * Drive a Claude Code-style two-line status alongside {@link ConversationRuntime#run_turn}.
+     *
+     * <pre>
+     * · Infusing… (10s · ↓ 277 tokens · thinking)
+     *   ⎿  Tip: …
+     * </pre>
+     *
+     * Token count is polled from {@link ConversationRuntime#usage()}; it advances in chunks
+     * because usage is recorded once per model iteration, not per delta — that matches the
+     * upstream tool's behavior closely enough that a viewer cannot tell the difference. The
+     * "thinking" label flips to {@code thought for Ns} once any output token has been observed.
      */
     private TurnSummary run_turn_with_claude_code_spinner(String line) {
         AnsiPalette p = renderer.palette();
-        String verb = CLAUDE_CODE_VERBS[
+        String idle_verb = CLAUDE_CODE_VERBS[
                 java.util.concurrent.ThreadLocalRandom.current().nextInt(CLAUDE_CODE_VERBS.length)];
+        String tip = CLAUDE_CODE_TIPS[
+                java.util.concurrent.ThreadLocalRandom.current().nextInt(CLAUDE_CODE_TIPS.length)];
         long started = System.nanoTime();
         java.util.concurrent.atomic.AtomicBoolean done = new java.util.concurrent.atomic.AtomicBoolean(false);
+        java.util.concurrent.atomic.AtomicBoolean paused = new java.util.concurrent.atomic.AtomicBoolean(false);
+        java.util.concurrent.atomic.AtomicBoolean printed_once = new java.util.concurrent.atomic.AtomicBoolean(false);
+        java.util.concurrent.atomic.AtomicLong thought_ended_ns = new java.util.concurrent.atomic.AtomicLong(0L);
         java.util.concurrent.atomic.AtomicInteger frame = new java.util.concurrent.atomic.AtomicInteger(0);
+
+        // Live signal updated by the adapter as wire events arrive: how many text characters have
+        // streamed in this turn, and the most recent tool name we've seen the model start.
+        java.util.concurrent.atomic.AtomicLong char_count = new java.util.concurrent.atomic.AtomicLong(0L);
+        java.util.concurrent.atomic.AtomicReference<String> latest_tool =
+                new java.util.concurrent.atomic.AtomicReference<>(null);
+
+        ProgressListener listener = new ProgressListener() {
+            @Override
+            public void on_text_delta_received(int chars) {
+                char_count.addAndGet(chars);
+            }
+
+            @Override
+            public void on_tool_starting(String tool_name) {
+                latest_tool.set(tool_name);
+            }
+        };
+        runtime.with_progress_listener(listener);
+
         Thread ticker = Thread.ofVirtual().start(() -> {
             while (!done.get()) {
                 try {
@@ -179,22 +236,53 @@ public final class Repl {
                 if (done.get()) {
                     return;
                 }
-                long elapsed = (System.nanoTime() - started) / 1_000_000_000L;
-                String sparkle = CLAUDE_CODE_SPARKLES[frame.getAndIncrement() % CLAUDE_CODE_SPARKLES.length];
+                if (paused.get()) {
+                    continue;
+                }
+                long now = System.nanoTime();
+                long elapsed_s = (now - started) / 1_000_000_000L;
+                long chars = char_count.get();
+                if (chars > 0 && thought_ended_ns.get() == 0L) {
+                    thought_ended_ns.set(now);
+                }
+                String thought_label;
+                long ended = thought_ended_ns.get();
+                if (ended == 0L) {
+                    thought_label = "thinking";
+                } else {
+                    thought_label = "thought for " + ((ended - started) / 1_000_000_000L) + "s";
+                }
+                String dot = CLAUDE_CODE_DOTS[frame.getAndIncrement() % CLAUDE_CODE_DOTS.length];
+                String spinner_line =
+                        format_claude_code_status(p, dot, idle_verb, elapsed_s, chars, latest_tool.get(), thought_label);
+                String tip_line = "  " + p.dim("⎿  " + tip);
                 StringBuilder buf = new StringBuilder();
-                buf.append('\r')
-                        .append(p.spinner_active(sparkle + " " + verb + "…"))
-                        .append(p.dim(" (" + elapsed + "s)"))
-                        .append("                    "); // pad so longer prior labels are erased
-                buf.append('\r')
-                        .append(p.spinner_active(sparkle + " " + verb + "…"))
-                        .append(p.dim(" (" + elapsed + "s)"));
+                if (printed_once.get()) {
+                    buf.append(CSI_CURSOR_PREV_LINE).append(CSI_ERASE_LINE);
+                }
+                buf.append(spinner_line)
+                        .append(CSI_CURSOR_NEXT_LINE)
+                        .append(CSI_ERASE_LINE)
+                        .append(tip_line);
                 out.print(buf.toString());
                 out.flush();
+                printed_once.set(true);
             }
         });
+        // Wrap the prompter so y/N approval prompts don't get clobbered by the next spinner tick:
+        // pause the ticker, clear both spinner lines, delegate, then resume on a fresh line.
+        PermissionPrompter wrapped = request -> {
+            paused.set(true);
+            clear_two_line_status(printed_once.get());
+            try {
+                return prompter.decide(request);
+            } finally {
+                paused.set(false);
+                printed_once.set(false);
+            }
+        };
         try {
-            return runtime.run_turn(line, prompter);
+            return runtime.run_turn(line, wrapped);
         } finally {
             done.set(true);
             ticker.interrupt();
@@ -203,14 +291,90 @@ public final class Repl {
             } catch (InterruptedException ignored) {
                 Thread.currentThread().interrupt();
             }
-            // Clear the spinner line before the renderer prints.
-            out.print("\r");
-            for (int i = 0; i < 64; i++) {
-                out.print(' ');
-            }
-            out.print('\r');
-            out.flush();
+            // Detach the listener so a subsequent non-spinner call (e.g. a slash command that hits
+            // the runtime) doesn't accidentally feed a stale spinner.
+            runtime.with_progress_listener(ProgressListener.NO_OP);
+            clear_two_line_status(printed_once.get());
         }
+    }
+
+    /**
+     * Compose the spinner's status line. Picks a verb based on what the adapter has reported so
+     * far: a tool name beats raw streaming beats the random idle verb. The format function is
+     * extracted (and package-private) so it can be unit-tested without driving the whole REPL.
+     *
+     * <p>Examples:
+     * <ul>
+     *   <li>{@code · Calling bash… (12s · ↓ 800 chars · thinking)} — tool detected
+     *   <li>{@code · Streaming… (6s · ↓ 1.4k chars · thinking)} — text flowing, no tool yet
+     *   <li>{@code · Infusing… (4s · thinking)} — nothing heard yet
+     * </ul>
+     */
+    static String format_claude_code_status(
+            AnsiPalette palette,
+            String dot,
+            String idle_verb,
+            long elapsed_s,
+            long char_count,
+            String latest_tool,
+            String thought_label) {
+        String verb;
+        if (latest_tool != null && !latest_tool.isEmpty()) {
+            verb = "Calling " + latest_tool;
+        } else if (char_count > 0L) {
+            verb = "Streaming";
+        } else {
+            verb = idle_verb;
+        }
+        StringBuilder paren = new StringBuilder();
+        paren.append('(').append(elapsed_s).append('s');
+        if (char_count > 0L) {
+            paren.append(" · ↓ ").append(format_chars(char_count)).append(" chars");
+        }
+        paren.append(" · ").append(thought_label).append(')');
+        return palette.spinner_active(dot + " " + verb + "…") + palette.dim(" " + paren);
+    }
+
+    /** Format a char count: 999 → "999", 1400 → "1.4k", 12000 → "12k". */
+    static String format_chars(long n) {
+        if (n < 1000L) {
+            return Long.toString(n);
+        }
+        double k = n / 1000.0;
+        if (k >= 100.0) {
+            return Math.round(k) + "k";
+        }
+        return String.format(java.util.Locale.ROOT, "%.1fk", k);
+    }
+
+    /**
+     * Erase the two-line status block (spinner + tip) and leave the cursor at the start of the
+     * spinner-line column so subsequent prints look fresh. No-op if the spinner never drew.
+     */
+    private void clear_two_line_status(boolean had_drawn) {
+        if (!had_drawn) {
+            return;
+        }
+        StringBuilder buf = new StringBuilder();
+        buf.append(CSI_CURSOR_PREV_LINE)
+                .append(CSI_ERASE_LINE)
+                .append(CSI_CURSOR_NEXT_LINE)
+                .append(CSI_ERASE_LINE)
+                .append(CSI_CURSOR_PREV_LINE);
+        out.print(buf.toString());
+        out.flush();
+    }
+
+    /** Format a token count like Claude Code: 999 → "999", 3149 → "3.1k", 12000 → "12k". */
+    static String format_tokens(long n) {
+        if (n < 1000L) {
+            return Long.toString(n);
+        }
+        double k = n / 1000.0;
+        if (k >= 100.0) {
+            return Math.round(k) + "k";
+        }
+        return String.format(java.util.Locale.ROOT, "%.1fk", k);
     }
 
     /**

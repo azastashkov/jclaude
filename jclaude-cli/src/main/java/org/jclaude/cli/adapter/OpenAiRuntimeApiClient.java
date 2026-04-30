@@ -24,6 +24,7 @@ import org.jclaude.api.types.Usage;
 import org.jclaude.runtime.conversation.ApiClient;
 import org.jclaude.runtime.conversation.ApiRequest;
 import org.jclaude.runtime.conversation.AssistantEvent;
+import org.jclaude.runtime.conversation.ProgressListener;
 import org.jclaude.runtime.conversation.RuntimeError;
 import org.jclaude.runtime.session.ContentBlock;
 import org.jclaude.runtime.session.ConversationMessage;
@@ -54,9 +55,14 @@ public final class OpenAiRuntimeApiClient implements ApiClient {
 
     @Override
     public List<AssistantEvent> stream(ApiRequest runtime_request) {
+        return stream(runtime_request, ProgressListener.NO_OP);
+    }
+
+    @Override
+    public List<AssistantEvent> stream(ApiRequest runtime_request, ProgressListener listener) {
         MessageRequest wire_request = build_message_request(runtime_request);
         try (OpenAiCompatClient.StreamingResponse response = client.stream_message(wire_request)) {
-            return translate_stream(response);
+            return translate_stream(response, listener);
         } catch (RuntimeException error) {
             // Surface every transport / API failure as RuntimeError so the
             // ConversationRuntime can propagate it.
@@ -143,12 +149,29 @@ public final class OpenAiRuntimeApiClient implements ApiClient {
 
     /** Translate the OpenAI-shape stream into the runtime-facing event list. */
     static List<AssistantEvent> translate_stream(Iterable<StreamEvent> events) {
+        return translate_stream(events, ProgressListener.NO_OP);
+    }
+
+    /**
+     * Listener-aware variant of {@link #translate_stream(Iterable)}. Emits incremental progress
+     * signals to {@code listener} as the SSE chunks arrive, then post-processes the buffered
+     * event list (including the Hermes-XML rewrite) the same way as the non-listener variant.
+     */
+    static List<AssistantEvent> translate_stream(Iterable<StreamEvent> events, ProgressListener listener) {
         List<AssistantEvent> out = new ArrayList<>();
         // Track the per-block-index state so we can buffer tool-use input JSON
         // chunks and emit one AssistantEvent.ToolUse on content_block_stop.
         Map<Integer, ToolUseAccumulator> tool_uses = new HashMap<>();
         Usage final_usage = null;
         boolean message_stop_seen = false;
+
+        // Mid-stream Hermes-XML scan state. qwen3-coder + similar models emit tool calls inside
+        // assistant text rather than as structured tool_calls, so we cannot rely on
+        // ContentBlockStart to know which tool the model is calling. Instead, we accumulate text
+        // chunks and scan for the closing `>` of `<function=NAME>` — the first instant the tool
+        // name is decoded. The non-listener path doesn't pay for this scan.
+        StringBuilder text_scan_buffer = new StringBuilder();
+        int hermes_scan_cursor = 0;
 
         for (StreamEvent event : events) {
             if (event instanceof StreamEvent.ContentBlockStart start) {
@@ -165,10 +188,15 @@ public final class OpenAiRuntimeApiClient implements ApiClient {
                         }
                     }
                     tool_uses.put(start.index(), acc);
+                    listener.on_tool_starting(use.name());
                 }
             } else if (event instanceof StreamEvent.ContentBlockDelta delta) {
                 if (delta.delta() instanceof BlockDelta.TextDelta td) {
                     out.add(new AssistantEvent.TextDelta(td.text()));
+                    listener.on_text_delta_received(td.text().length());
+                    text_scan_buffer.append(td.text());
+                    hermes_scan_cursor =
+                            scan_for_hermes_tool_starts(text_scan_buffer, hermes_scan_cursor, listener);
                 } else if (delta.delta() instanceof BlockDelta.InputJsonDelta json_delta) {
                     ToolUseAccumulator acc = tool_uses.get(delta.index());
                     if (acc != null) {
@@ -211,6 +239,31 @@ public final class OpenAiRuntimeApiClient implements ApiClient {
             out.add(AssistantEvent.MessageStop.INSTANCE);
         }
         return rewrite_hermes_style_tool_calls(out);
+    }
+
+    // Mid-stream Hermes-XML tool-name detector. Matches `<function=NAME>` where the closing `>`
+    // has actually arrived — partial chunks like `<function=read_fi` won't trigger early.
+    private static final Pattern HERMES_FUNCTION_OPEN = Pattern.compile("<function=([\\w_.\\-]+)>");
+
+    /**
+     * Scan {@code buffer} from {@code cursor} for any newly-arrived {@code <function=NAME>} open
+     * tag, fire {@link ProgressListener#on_tool_starting(String)} for each, and return the
+     * advanced cursor position. Idempotent: calling repeatedly with the same cursor never
+     * re-fires for a tag that has already been reported.
+     */
+    static int scan_for_hermes_tool_starts(StringBuilder buffer, int cursor, ProgressListener listener) {
+        if (cursor >= buffer.length()) {
+            return cursor;
+        }
+        Matcher matcher = HERMES_FUNCTION_OPEN.matcher(buffer);
+        int next_cursor = cursor;
+        if (matcher.region(cursor, buffer.length()).find()) {
+            do {
+                listener.on_tool_starting(matcher.group(1));
+                next_cursor = matcher.end();
+            } while (matcher.find());
+        }
+        return next_cursor;
     }
 
     // qwen3-coder + similar Hermes-template models emit tool calls as XML-shaped
